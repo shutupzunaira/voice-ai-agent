@@ -1,37 +1,56 @@
 import { useState } from "react"
+import "./App.css"
+import HomePage from "./pages/HomePage"
+import InterviewPage from "./pages/InterviewPage"
+import ReviewPage from "./pages/ReviewPage"
 
 function App() {
+  const [currentPage, setCurrentPage] = useState("home") // home, interview, review
+  const [selectedTopic, setSelectedTopic] = useState(null)
+  const [interviewData, setInterviewData] = useState([])
 
-  const [response, setResponse] = useState("")
+  const handleStartInterview = (topic) => {
+    setSelectedTopic(topic)
+    setInterviewData([])
+    setCurrentPage("interview")
+  }
 
-  function handleClick() {
-    setResponse("Listening...")
+  const handleEndInterview = (data) => {
+    setInterviewData(data)
+    setCurrentPage("review")
+  }
+
+  const handleBackToHome = () => {
+    setCurrentPage("home")
+    setSelectedTopic(null)
+    setInterviewData([])
+  }
+
+  const handleRestartInterview = () => {
+    setInterviewData([])
+    setCurrentPage("interview")
   }
 
   return (
-    <div style={{ textAlign: "center", marginTop: "120px" }}>
-
-      <h1>Voice AI Assistant</h1>
-
-      <button
-        onClick={handleClick}
-        style={{
-          padding: "15px 30px",
-          fontSize: "18px",
-          borderRadius: "10px",
-          cursor: "pointer",
-          backgroundColor: "#4CAF50",
-          color: "white",
-          border: "none"
-        }}
-      >
-        🎤 Start Talking
-      </button>
-
-      <p style={{ marginTop: "30px", fontSize: "18px" }}>
-        AI Response: {response}
-      </p>
-
+    <div className="app-container">
+      {currentPage === "home" && (
+        <HomePage onStartInterview={handleStartInterview} />
+      )}
+      {currentPage === "interview" && (
+        <InterviewPage
+          topic={selectedTopic}
+          onEndInterview={handleEndInterview}
+          onBack={handleBackToHome}
+        />
+      )}
+      {currentPage === "review" && (
+        <ReviewPage
+          topic={selectedTopic}
+          data={interviewData}
+          onBackToHome={handleBackToHome}
+          onRestartInterview={handleRestartInterview}
+        />
+      )}
     </div>
   )
 }
