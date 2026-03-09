@@ -4,12 +4,17 @@ function App() {
 
   const [response, setResponse] = useState("")
 
+  function handleClick() {
+    setResponse("Listening...")
+  }
+
   return (
     <div style={{ textAlign: "center", marginTop: "120px" }}>
 
       <h1>Voice AI Assistant</h1>
 
       <button
+        onClick={handleClick}
         style={{
           padding: "15px 30px",
           fontSize: "18px",
