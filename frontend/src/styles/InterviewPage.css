@@ -233,6 +233,62 @@
   justify-content: center;
 }
 
+.feedback-button {
+  background: #42a5f5;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.feedback-button:hover:not(:disabled) {
+  background: #1e88e5;
+  transform: scale(1.05);
+}
+.feedback-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.feedback-list {
+  margin-top: 2rem;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.feedback-list h2 {
+  margin-top: 0;
+}
+.feedback-entry {
+  border-top: 1px solid #eee;
+  padding: 1rem 0;
+}
+.feedback-entry:first-of-type {
+  border-top: none;
+}
+.feedback-stars {
+  color: #ffb300;
+  font-size: 1.2rem;
+}
+.feedback-stars .star {
+  opacity: 0.3;
+}
+.feedback-stars .star.active {
+  opacity: 1;
+}
+.feedback-text {
+  margin: 0.5rem 0;
+  color: #333;
+}
+.feedback-date {
+  color: #777;
+  font-size: 0.8rem;
+}
+
 .end-interview-button {
   background: #764ba2;
   color: white;

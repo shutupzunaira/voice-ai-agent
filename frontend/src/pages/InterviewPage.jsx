@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import "../styles/InterviewPage.css"
 
-function InterviewPage({ topic = "general", onEndInterview, onBack }) {
+function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedback, feedbackEntries = [] }) {
   const [messages, setMessages] = useState([
     {
       sender: "AI",
@@ -415,6 +415,12 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
 
           <div className="interview-actions">
             <button
+              className="feedback-button"
+              onClick={onOpenFeedback}
+            >
+              📝 Give Feedback
+            </button>
+            <button
               className="end-interview-button"
               onClick={() => onEndInterview(sessionData)}
             >
@@ -423,6 +429,23 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
           </div>
         </div>
       </div>
+
+      {feedbackEntries && feedbackEntries.length > 0 && (
+        <div className="feedback-list">
+          <h2>Submitted Feedback</h2>
+          {feedbackEntries.map((entry) => (
+            <div key={entry.id} className="feedback-entry">
+              <div className="feedback-stars">
+                {[1,2,3,4,5].map((n) => (
+                  <span key={n} className={n <= entry.rating ? "star active" : "star"}>★</span>
+                ))}
+              </div>
+              <p className="feedback-text">{entry.text}</p>
+              <small className="feedback-date">{new Date(entry.createdAt).toLocaleString()}</small>
+            </div>
+          ))}
+        </div>
+      )}
 
     </div>
   )
