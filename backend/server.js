@@ -2,8 +2,6 @@ const express = require("express")
 const cors = require("cors")
 require("dotenv").config()
 
-const { GoogleGenerativeAI } = require("@google/generative-ai")
-
 const app = express()
 app.use(cors())
 app.use(express.json())
@@ -12,8 +10,17 @@ if (!process.env.GEMINI_API_KEY) {
   console.warn("⚠️ GEMINI_API_KEY not set. AI features will not work.")
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "missing")
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash"
+
+let aiClientPromise = null
+async function getAiClient() {
+  if (aiClientPromise) return aiClientPromise
+  aiClientPromise = (async () => {
+    const { GoogleGenAI } = await import("@google/genai")
+    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  })()
+  return aiClientPromise
+}
 
 // In-memory conversation state (resets on restart)
 let conversationHistory = [
@@ -119,9 +126,15 @@ app.get("/api/next-question", async (req, res) => {
   try {
     if (!ensureGeminiKey(res)) return
 
-    const chat = model.startChat({ history: conversationHistory })
-    const result = await chat.sendMessage("Ask the next interview question now.")
-    const question = (result?.response?.text() || "").trim()
+    const ai = await getAiClient()
+    const contents = conversationHistory.concat([
+      { role: "user", parts: [{ text: "Ask the next interview question now." }] }
+    ])
+    const result = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents
+    })
+    const question = (result?.text || "").trim()
 
     if (!question) {
       return res.status(500).json({
@@ -184,8 +197,12 @@ app.post("/ai", async (req, res) => {
       return res.status(400).json({ error: "Missing message" })
     }
 
-    const result = await model.generateContent(userMessage)
-    const text = result?.response?.text() || ""
+    const ai = await getAiClient()
+    const result = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: userMessage
+    })
+    const text = result?.text || ""
 
     res.json({ reply: text })
   } catch (error) {
