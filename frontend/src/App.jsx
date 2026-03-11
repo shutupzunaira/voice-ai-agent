@@ -7,9 +7,11 @@ import ReviewPage from "./pages/ReviewPage"
 function App() {
   const [currentPage, setCurrentPage] = useState("home") // home, interview, review
   const [interviewData, setInterviewData] = useState([])
+  const [selectedTopic, setSelectedTopic] = useState("general")
 
-  const handleStartInterview = () => {
+  const handleStartInterview = (topicId = "general") => {
     setInterviewData([])
+    setSelectedTopic(topicId)
     setCurrentPage("interview")
   }
 
@@ -20,7 +22,6 @@ function App() {
 
   const handleBackToHome = () => {
     setCurrentPage("home")
-    setInterviewData([])
   }
 
   const handleRestartInterview = () => {
@@ -31,17 +32,20 @@ function App() {
   return (
     <div className="app-container">
       {currentPage === "home" && (
-        <HomePage onStartInterview={handleStartInterview} />
+        <HomePage
+          onStartInterview={handleStartInterview}
+        />
       )}
       {currentPage === "interview" && (
         <InterviewPage
+          topic={selectedTopic}
           onEndInterview={handleEndInterview}
           onBack={handleBackToHome}
         />
       )}
       {currentPage === "review" && (
         <ReviewPage
-          topic={"General"}
+          topic={selectedTopic}
           data={interviewData}
           onBackToHome={handleBackToHome}
           onRestartInterview={handleRestartInterview}

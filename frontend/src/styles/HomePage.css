@@ -31,6 +31,12 @@
   font-size: clamp(0.95rem, 2vw, 1.2rem);
 }
 
+.home-start {
+  display: flex;
+  justify-content: center;
+  margin: 1rem 0 2rem;
+}
+
 .topics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -49,6 +55,16 @@
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
+  /* make each card square */
+  aspect-ratio: 1 / 1;
+  justify-content: space-between;
+}
+.topic-card h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+.topic-card .topic-description {
+  flex: 1;
 }
 
 .topic-card:hover {
@@ -97,6 +113,121 @@
 
 .start-button:active {
   transform: scale(0.98);
+}
+
+.start-button.secondary {
+  background: rgba(102, 126, 234, 0.15);
+  color: #667eea;
+  border: 1px solid rgba(102, 126, 234, 0.35);
+}
+
+.feedback-section {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.25rem;
+  max-width: 1200px;
+  margin: 0 auto 2rem;
+  color: white;
+  backdrop-filter: blur(10px);
+}
+
+.feedback-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.feedback-header-row h2 {
+  margin: 0;
+}
+
+.feedback-portal {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.star-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.star-button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.45);
+  padding: 0.15rem 0.25rem;
+}
+
+.star-button.active {
+  color: #fff;
+}
+
+.feedback-textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+}
+
+.feedback-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.feedback-item {
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.feedback-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.feedback-stars {
+  font-size: 1.1rem;
+  color: #667eea;
+  letter-spacing: 0.08em;
+}
+
+.feedback-date {
+  font-size: 0.8rem;
+  color: #777;
+  white-space: nowrap;
+}
+
+.feedback-item-text {
+  margin-top: 0.5rem;
+  color: #555;
+  line-height: 1.35;
 }
 
 .loading-message,

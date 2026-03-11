@@ -30,6 +30,41 @@ let conversationHistory = [
     ]
   }
 ]
+let currentTopic = "general"
+
+const AVAILABLE_TOPICS = [
+  { id: "behavioral", name: "Behavioral" },
+  { id: "technical", name: "Technical" },
+  { id: "leadership", name: "Leadership" },
+  { id: "communication", name: "Communication" },
+  { id: "product", name: "Product / PM" },
+  { id: "systemDesign", name: "System Design" },
+  { id: "hr", name: "HR / Culture Fit" }
+]
+
+function resetConversation(topicId) {
+  currentTopic = topicId || "general"
+  const topicLine =
+    currentTopic === "general" ? "" : `The interview topic is: ${currentTopic}. `
+
+  conversationHistory = [
+    {
+      role: "user",
+      parts: [
+        {
+          text:
+            "You are an AI interviewer. " +
+            topicLine +
+            "Ask thoughtful, progressive interview questions. " +
+            "Each next question should adapt to the candidate's previous answers. " +
+            "Do NOT reveal or pre-plan a list of future questions. " +
+            "Avoid repeating questions. " +
+            "Output only the next question text (no labels, no bullets), 1–2 sentences."
+        }
+      ]
+    }
+  ]
+}
 
 function ensureGeminiKey(res) {
   if (!process.env.GEMINI_API_KEY) {
@@ -49,6 +84,34 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     geminiConfigured: !!process.env.GEMINI_API_KEY
   })
+})
+
+app.get("/topics", (req, res) => {
+  res.json({
+    success: true,
+    topics: AVAILABLE_TOPICS,
+    timestamp: new Date().toISOString()
+  })
+})
+
+app.post("/api/start-session", (req, res) => {
+  try {
+    const topic = req.body?.topic
+    const valid = AVAILABLE_TOPICS.some((t) => t.id === topic)
+    resetConversation(valid ? topic : "general")
+    res.json({
+      success: true,
+      topic: currentTopic,
+      timestamp: new Date().toISOString()
+    })
+  } catch (error) {
+    console.error("Error in /api/start-session:", error)
+    res.status(500).json({
+      success: false,
+      error: "Failed to start session",
+      message: error.message
+    })
+  }
 })
 
 // Compatible with your frontend: fetch next question

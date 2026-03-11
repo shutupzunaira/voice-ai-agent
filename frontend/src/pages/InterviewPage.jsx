@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import "../styles/InterviewPage.css"
 
-function InterviewPage({ onEndInterview, onBack }) {
+function InterviewPage({ topic = "general", onEndInterview, onBack }) {
   const [messages, setMessages] = useState([
     {
       sender: "AI",
@@ -19,6 +19,7 @@ function InterviewPage({ onEndInterview, onBack }) {
 
   const recognitionRef = useRef(null)
   const recordingIntervalRef = useRef(null)
+  const interimTranscriptRef = useRef("")
 
   async function fetchNextQuestion() {
     const res = await fetch("/api/next-question")
@@ -73,14 +74,38 @@ function InterviewPage({ onEndInterview, onBack }) {
 
     const recognition = new SpeechRecognition()
     recognition.lang = "en-US"
-    recognition.interimResults = false
+    recognition.continuous = true
+    recognition.interimResults = true
     recognition.maxAlternatives = 1
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      if (!transcript || !transcript.trim()) return
-      setMessages((prev) => [...prev, { sender: "You", text: transcript }])
-      setPendingTranscript(transcript)
+      let interim = ""
+      let finalText = ""
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i]
+        const text = (result?.[0]?.transcript || "").trim()
+        if (!text) continue
+        if (result.isFinal) finalText += (finalText ? " " : "") + text
+        else interim += (interim ? " " : "") + text
+      }
+
+      interimTranscriptRef.current = interim
+
+      if (finalText) {
+        setMessages((prev) => [...prev, { sender: "You", text: finalText }])
+        setPendingTranscript(finalText)
+        interimTranscriptRef.current = ""
+      }
+    }
+
+    recognition.onspeechend = () => {
+      // Stop listening shortly after user finishes speaking
+      try {
+        recognition.stop()
+      } catch {
+        // ignore
+      }
     }
 
     recognition.onerror = (event) => {
@@ -122,6 +147,12 @@ function InterviewPage({ onEndInterview, onBack }) {
     const loadInitialQuestion = async () => {
       try {
         setLoading(true)
+        // Start/reset a Gemini session with selected topic
+        await fetch("/api/start-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic })
+        })
         const question = await fetchNextQuestion()
 
         setMessages((prev) => [...prev, { sender: "AI", text: question }])
@@ -143,7 +174,7 @@ function InterviewPage({ onEndInterview, onBack }) {
     }
 
     loadInitialQuestion()
-  }, [])
+  }, [topic])
 
   async function getQuestion() {
     setLoading(true)
@@ -186,6 +217,7 @@ function InterviewPage({ onEndInterview, onBack }) {
     try {
       setIsRecording(true)
       setRecordingTime(0)
+      interimTranscriptRef.current = ""
 
       recordingIntervalRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1)
@@ -211,15 +243,31 @@ function InterviewPage({ onEndInterview, onBack }) {
 
   function stopRecording() {
     if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop()
+      try {
+        recognitionRef.current.stop()
+      } catch {
+        // ignore
+      }
       setIsRecording(false)
       clearInterval(recordingIntervalRef.current)
+    }
+  }
+
+  function stopAiVoice() {
+    try {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel()
+      }
+    } catch {
+      // ignore
     }
   }
 
   async function playTextAsAudio(text) {
     try {
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        // Cancel any existing speech so "Stop AI voice" is predictable
+        window.speechSynthesis.cancel()
         const utterance = new SpeechSynthesisUtterance(text)
         utterance.lang = "en-US"
         window.speechSynthesis.speak(utterance)
@@ -334,6 +382,13 @@ function InterviewPage({ onEndInterview, onBack }) {
                 ⏹ Stop ({formatTime(recordingTime)})
               </button>
             )}
+            <button
+              className="next-button"
+              onClick={stopAiVoice}
+              disabled={loading}
+            >
+              🔇 Stop AI Voice
+            </button>
             <button
               className="next-button"
               onClick={getQuestion}
