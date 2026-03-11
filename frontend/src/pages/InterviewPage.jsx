@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react"
 import "../styles/InterviewPage.css"
 
-function InterviewPage({ topic, onEndInterview, onBack }) {
+function InterviewPage({ onEndInterview, onBack }) {
   const [messages, setMessages] = useState([
     {
       sender: "AI",
-      text: `Welcome to the ${topic} interview! Let's get your first question.`
+      text: `Welcome! Let's get your first question.`
     }
   ])
   const [loading, setLoading] = useState(false)
@@ -15,9 +15,50 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
   const [questionCount, setQuestionCount] = useState(0)
   const [sessionData, setSessionData] = useState([])
   const [pendingTranscript, setPendingTranscript] = useState(null)
+  const [lastQuestion, setLastQuestion] = useState(null)
 
   const recognitionRef = useRef(null)
   const recordingIntervalRef = useRef(null)
+
+  async function fetchNextQuestion() {
+    const res = await fetch("/api/next-question")
+    let data = null
+    try {
+      data = await res.json()
+    } catch {
+      // ignore JSON parse errors
+    }
+    if (!res.ok) {
+      const msg = data?.message || data?.error || `HTTP error! status: ${res.status}`
+      throw new Error(msg)
+    }
+    if (!data?.success) {
+      throw new Error(data?.message || data?.error || "Failed to get question")
+    }
+    return (data.question || "").trim()
+  }
+
+  async function postAnswer(answerText) {
+    const res = await fetch("/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer: answerText })
+    })
+    let data = null
+    try {
+      data = await res.json()
+    } catch {
+      // ignore JSON parse errors
+    }
+    if (!res.ok) {
+      const msg = data?.message || data?.error || `HTTP error! status: ${res.status}`
+      throw new Error(msg)
+    }
+    if (!data?.success) {
+      throw new Error(data?.message || data?.error || "Failed to save answer")
+    }
+    return data
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -81,15 +122,10 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
     const loadInitialQuestion = async () => {
       try {
         setLoading(true)
-        const res = await fetch(`/api/${topic}`)
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`)
-        }
-
-        const data = await res.json()
-        const question = data.question || "What is your experience with this topic?"
+        const question = await fetchNextQuestion()
 
         setMessages((prev) => [...prev, { sender: "AI", text: question }])
+        setLastQuestion(question)
         setQuestionCount(1)
         await playTextAsAudio(question)
       } catch (error) {
@@ -98,7 +134,7 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
           ...prev,
           {
             sender: "AI",
-            text: "Error: Could not load the first question. Please try again."
+            text: `Error: ${error.message || "Could not load the first question. Please try again."}`
           }
         ])
       } finally {
@@ -107,20 +143,15 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
     }
 
     loadInitialQuestion()
-  }, [topic])
+  }, [])
 
   async function getQuestion() {
     setLoading(true)
     try {
-      const res = await fetch(`/api/${topic}`)
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`)
-      }
-
-      const data = await res.json()
-      const question = data.question || "What is your experience with this topic?"
+      const question = await fetchNextQuestion()
 
       setMessages((prev) => [...prev, { sender: "AI", text: question }])
+      setLastQuestion(question)
       setQuestionCount((prev) => prev + 1)
 
       // Play question as speech
@@ -131,7 +162,7 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
         ...prev,
         {
           sender: "AI",
-          text: "Error: Could not load question. Please try again."
+          text: `Error: ${error.message || "Could not load question. Please try again."}`
         }
       ])
     } finally {
@@ -227,43 +258,28 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
     setLoading(true)
 
     try {
-      const res = await fetch("/answer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ answer: answerText, topic })
-      })
+      await postAnswer(answerText)
 
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`)
-      }
+      // Store session data (we don't have separate "feedback" anymore; we store next question as AI response)
+      const answeredQuestion = lastQuestion || `Question ${questionCount}`
 
-      const data = await res.json()
+      const nextQuestion = await fetchNextQuestion()
+      setMessages((prev) => [...prev, { sender: "AI", text: nextQuestion }])
+      setLastQuestion(nextQuestion)
+      setQuestionCount((prev) => prev + 1)
 
-      if (data.success) {
-        const feedback = data.feedback || "Thank you for your response."
-        setMessages((prev) => [...prev, { sender: "AI", text: feedback }])
+      const newData = [
+        ...sessionData,
+        { question: answeredQuestion, answer: answerText, feedback: nextQuestion }
+      ]
+      setSessionData(newData)
 
-        // Store session data
-        const newData = [
-          ...sessionData,
-          { question: "Q" + (questionCount + 1), answer: answerText, feedback }
-        ]
-        setSessionData(newData)
-
-        await playTextAsAudio(feedback)
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          { sender: "AI", text: `Error: ${data.message || "Failed to process answer"}` }
-        ])
-      }
+      await playTextAsAudio(nextQuestion)
     } catch (error) {
       console.error("Error sending answer:", error)
       setMessages((prev) => [
         ...prev,
-        { sender: "AI", text: "Error: Could not process your answer." }
+        { sender: "AI", text: `Error: ${error.message || "Could not process your answer."}` }
       ])
     } finally {
       setLoading(false)
@@ -285,7 +301,7 @@ function InterviewPage({ topic, onEndInterview, onBack }) {
         <button className="back-button" onClick={onBack}>
           ← Back
         </button>
-        <h1>Interview: {topic}</h1>
+        <h1>Interview Practice</h1>
         <p className="question-counter">Question {questionCount}</p>
       </div>
 
