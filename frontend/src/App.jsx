@@ -3,22 +3,21 @@ import "./App.css"
 import HomePage from "./pages/HomePage"
 import InterviewPage from "./pages/InterviewPage"
 import ReviewPage from "./pages/ReviewPage"
-import FeedbackPage from "./pages/FeedbackPage"
 
 function App() {
-  const [currentPage, setCurrentPage] = useState("home") // home, interview, review, feedback
-  const [interviewData, setInterviewData] = useState([])
+  const [currentPage, setCurrentPage] = useState("home") // home, interview, review
   const [selectedTopic, setSelectedTopic] = useState("general")
-  const [feedbackEntries, setFeedbackEntries] = useState([])
+  const [reviewData, setReviewData] = useState(null) // { feedback, stats }
 
   const handleStartInterview = (topicId = "general") => {
-    setInterviewData([])
     setSelectedTopic(topicId)
+    setReviewData(null)
     setCurrentPage("interview")
   }
 
   const handleEndInterview = (data) => {
-    setInterviewData(data)
+    // data = { feedback: string, stats: { totalQuestions, answered, skipped, topic } }
+    setReviewData(data)
     setCurrentPage("review")
   }
 
@@ -27,51 +26,28 @@ function App() {
   }
 
   const handleRestartInterview = () => {
-    setInterviewData([])
-    setCurrentPage("interview")
-  }
-
-  const handleOpenFeedback = () => {
-    setCurrentPage("feedback")
-  }
-
-  const handleFeedbackSubmit = (entry) => {
-    setFeedbackEntries((prev) => [entry, ...prev])
-    setCurrentPage("interview")
-  }
-
-  const handleFeedbackBack = () => {
+    setReviewData(null)
     setCurrentPage("interview")
   }
 
   return (
     <div className="app-container">
       {currentPage === "home" && (
-        <HomePage
-          onStartInterview={handleStartInterview}
-        />
+        <HomePage onStartInterview={handleStartInterview} />
       )}
       {currentPage === "interview" && (
         <InterviewPage
           topic={selectedTopic}
           onEndInterview={handleEndInterview}
           onBack={handleBackToHome}
-          onOpenFeedback={handleOpenFeedback}
-          feedbackEntries={feedbackEntries}
         />
       )}
       {currentPage === "review" && (
         <ReviewPage
           topic={selectedTopic}
-          data={interviewData}
+          data={reviewData}
           onBackToHome={handleBackToHome}
           onRestartInterview={handleRestartInterview}
-        />
-      )}
-      {currentPage === "feedback" && (
-        <FeedbackPage
-          onSubmit={handleFeedbackSubmit}
-          onBack={handleFeedbackBack}
         />
       )}
     </div>

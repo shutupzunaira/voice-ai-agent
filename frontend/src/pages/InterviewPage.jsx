@@ -1,74 +1,121 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import "../styles/InterviewPage.css"
 
-function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedback, feedbackEntries = [] }) {
-  const [messages, setMessages] = useState([
-    {
-      sender: "AI",
-      text: `Welcome! Let's get your first question.`
-    }
-  ])
+function InterviewPage({ topic = "general", onEndInterview, onBack }) {
+  const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(false)
   const [userInput, setUserInput] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [questionCount, setQuestionCount] = useState(0)
-  const [sessionData, setSessionData] = useState([])
-  const [pendingTranscript, setPendingTranscript] = useState(null)
-  const [lastQuestion, setLastQuestion] = useState(null)
+  const [sessionStarted, setSessionStarted] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   const recognitionRef = useRef(null)
   const recordingIntervalRef = useRef(null)
-  const interimTranscriptRef = useRef("")
+  const fullTranscriptRef = useRef("")
+  const chatBoxRef = useRef(null)
 
-  async function fetchNextQuestion() {
-    const res = await fetch("/api/next-question")
-    let data = null
+  /* ─── helpers ─── */
+  const addMessage = useCallback((sender, text) => {
+    setMessages((prev) => [...prev, { sender, text }])
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      if (chatBoxRef.current) {
+        chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight
+      }
+    }, 50)
+  }, [])
+
+  /* ─── TTS ─── */
+  function stopSpeaking() {
     try {
-      data = await res.json()
-    } catch {
-      // ignore JSON parse errors
-    }
-    if (!res.ok) {
-      const msg = data?.message || data?.error || `HTTP error! status: ${res.status}`
-      throw new Error(msg)
-    }
-    if (!data?.success) {
-      throw new Error(data?.message || data?.error || "Failed to get question")
-    }
-    return (data.question || "").trim()
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel()
+      }
+    } catch { /* ignore */ }
+    setIsSpeaking(false)
   }
 
-  async function postAnswer(answerText) {
+  function speak(text) {
+    return new Promise((resolve) => {
+      try {
+        if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+          resolve()
+          return
+        }
+        window.speechSynthesis.cancel()
+        const utterance = new SpeechSynthesisUtterance(text)
+        utterance.lang = "en-US"
+        utterance.rate = 1.0
+        utterance.onstart = () => setIsSpeaking(true)
+        utterance.onend = () => { setIsSpeaking(false); resolve() }
+        utterance.onerror = () => { setIsSpeaking(false); resolve() }
+        window.speechSynthesis.speak(utterance)
+      } catch {
+        setIsSpeaking(false)
+        resolve()
+      }
+    })
+  }
+
+  /* ─── API calls ─── */
+  async function apiStartSession() {
+    const res = await fetch("/api/start-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic })
+    })
+    return res.json()
+  }
+
+  async function apiGetGreeting() {
+    const res = await fetch("/api/greeting")
+    const data = await res.json()
+    return data.greeting || "Hey there! Let's begin your interview."
+  }
+
+  async function apiNextQuestion() {
+    const res = await fetch("/api/next-question")
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data?.message || data?.error || "Failed to get question")
+    return { question: data.question, questionNumber: data.questionNumber }
+  }
+
+  async function apiSkipQuestion() {
+    const res = await fetch("/api/skip-question", { method: "POST" })
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data?.message || data?.error || "Failed to skip question")
+    return { question: data.question, questionNumber: data.questionNumber }
+  }
+
+  async function apiPostAnswer(answer) {
     const res = await fetch("/answer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer: answerText })
+      body: JSON.stringify({ answer })
     })
-    let data = null
-    try {
-      data = await res.json()
-    } catch {
-      // ignore JSON parse errors
-    }
-    if (!res.ok) {
-      const msg = data?.message || data?.error || `HTTP error! status: ${res.status}`
-      throw new Error(msg)
-    }
-    if (!data?.success) {
-      throw new Error(data?.message || data?.error || "Failed to save answer")
-    }
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data?.message || data?.error || "Failed to save answer")
     return data
   }
 
+  async function apiFeedback() {
+    const res = await fetch("/api/feedback")
+    const data = await res.json()
+    if (!res.ok || !data.success) throw new Error(data?.message || data?.error || "Failed to get feedback")
+    return data
+  }
+
+  /* ─── Speech Recognition setup ─── */
   useEffect(() => {
     if (typeof window === "undefined") return
 
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition
-
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      console.warn("SpeechRecognition API is not supported in this browser.")
+      console.warn("SpeechRecognition API not supported")
       return
     }
 
@@ -79,204 +126,189 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
     recognition.maxAlternatives = 1
 
     recognition.onresult = (event) => {
-      let interim = ""
       let finalText = ""
-
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
         const text = (result?.[0]?.transcript || "").trim()
         if (!text) continue
         if (result.isFinal) finalText += (finalText ? " " : "") + text
-        else interim += (interim ? " " : "") + text
       }
-
-      interimTranscriptRef.current = interim
-
       if (finalText) {
-        setMessages((prev) => [...prev, { sender: "You", text: finalText }])
-        setPendingTranscript(finalText)
-        interimTranscriptRef.current = ""
-      }
-    }
-
-    recognition.onspeechend = () => {
-      // Stop listening shortly after user finishes speaking
-      try {
-        recognition.stop()
-      } catch {
-        // ignore
+        fullTranscriptRef.current += (fullTranscriptRef.current ? " " : "") + finalText
       }
     }
 
     recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event)
-      setIsRecording(false)
-      clearInterval(recordingIntervalRef.current)
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "AI",
-          text:
-            "Error: Speech recognition failed. Please check your microphone and try again."
-        }
-      ])
+      console.error("Speech recognition error:", event.error)
+      // Don't stop on no-speech errors, just keep going
+      if (event.error !== "no-speech" && event.error !== "aborted") {
+        setIsRecording(false)
+        clearInterval(recordingIntervalRef.current)
+      }
     }
 
     recognition.onend = () => {
-      setIsRecording(false)
-      clearInterval(recordingIntervalRef.current)
+      // Auto-restart if still recording (browser may stop after silence)
+      if (recognitionRef.current?._keepAlive) {
+        try { recognition.start() } catch { /* ignore */ }
+      }
     }
 
     recognitionRef.current = recognition
 
     return () => {
       if (recognitionRef.current) {
+        recognitionRef.current._keepAlive = false
         recognitionRef.current.onresult = null
         recognitionRef.current.onerror = null
         recognitionRef.current.onend = null
+        try { recognitionRef.current.stop() } catch { /* ignore */ }
         recognitionRef.current = null
       }
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current)
-      }
+      clearInterval(recordingIntervalRef.current)
     }
   }, [])
 
+  /* ─── Initialize session ─── */
   useEffect(() => {
-    // Load first question on mount (separate from hooks dependencies)
-    const loadInitialQuestion = async () => {
+    const init = async () => {
       try {
         setLoading(true)
-        // Start/reset a Gemini session with selected topic
-        await fetch("/api/start-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic })
-        })
-        const question = await fetchNextQuestion()
+        await apiStartSession()
+        const greeting = await apiGetGreeting()
+        addMessage("AI", greeting)
+        scrollToBottom()
+        await speak(greeting)
 
-        setMessages((prev) => [...prev, { sender: "AI", text: question }])
-        setLastQuestion(question)
-        setQuestionCount(1)
-        await playTextAsAudio(question)
+        // Fetch first question
+        const { question, questionNumber } = await apiNextQuestion()
+        setQuestionCount(questionNumber)
+        addMessage("AI", question)
+        scrollToBottom()
+        await speak(question)
+        setSessionStarted(true)
       } catch (error) {
-        console.error("Error fetching initial question:", error)
-        setMessages((prev) => [
-          ...prev,
-          {
-            sender: "AI",
-            text: `Error: ${error.message || "Could not load the first question. Please try again."}`
-          }
-        ])
+        console.error("Init error:", error)
+        addMessage("AI", `Error starting session: ${error.message}`)
       } finally {
         setLoading(false)
       }
     }
-
-    loadInitialQuestion()
+    init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic])
 
-  async function getQuestion() {
+  /* ─── Recording controls ─── */
+  function startRecording() {
+    if (!recognitionRef.current) {
+      addMessage("AI", "Speech recognition is not supported in this browser. Please type your answer instead.")
+      return
+    }
+
+    // Stop TTS immediately when user starts recording
+    stopSpeaking()
+
+    fullTranscriptRef.current = ""
+    setIsRecording(true)
+    setRecordingTime(0)
+
+    recordingIntervalRef.current = setInterval(() => {
+      setRecordingTime((prev) => prev + 1)
+    }, 1000)
+
+    try {
+      recognitionRef.current._keepAlive = true
+      recognitionRef.current.start()
+    } catch (error) {
+      console.error("Error starting recognition:", error)
+      setIsRecording(false)
+      clearInterval(recordingIntervalRef.current)
+      addMessage("AI", "Could not start speech recognition. Please check microphone permissions.")
+    }
+  }
+
+  async function stopRecording() {
+    if (!recognitionRef.current) return
+
+    recognitionRef.current._keepAlive = false
+    try { recognitionRef.current.stop() } catch { /* ignore */ }
+    setIsRecording(false)
+    clearInterval(recordingIntervalRef.current)
+
+    // Wait a moment for final results
+    await new Promise((r) => setTimeout(r, 300))
+
+    const transcript = fullTranscriptRef.current.trim()
+    if (!transcript) {
+      addMessage("AI", "I didn't catch that. Could you try again?")
+      return
+    }
+
+    // Show user's answer and process it
+    addMessage("You", transcript)
+    scrollToBottom()
+    await processAnswer(transcript)
+  }
+
+  /* ─── Process answer → post to backend → get next question ─── */
+  async function processAnswer(answerText) {
+    if (!answerText?.trim()) return
     setLoading(true)
     try {
-      const question = await fetchNextQuestion()
-
-      setMessages((prev) => [...prev, { sender: "AI", text: question }])
-      setLastQuestion(question)
-      setQuestionCount((prev) => prev + 1)
-
-      // Play question as speech
-      await playTextAsAudio(question)
+      await apiPostAnswer(answerText)
+      const { question, questionNumber } = await apiNextQuestion()
+      setQuestionCount(questionNumber)
+      addMessage("AI", question)
+      scrollToBottom()
+      await speak(question)
     } catch (error) {
-      console.error("Error fetching question:", error)
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "AI",
-          text: `Error: ${error.message || "Could not load question. Please try again."}`
-        }
-      ])
+      console.error("Error processing answer:", error)
+      addMessage("AI", `Error: ${error.message || "Could not process your answer."}`)
     } finally {
       setLoading(false)
     }
   }
 
-  async function startRecording() {
-    if (!recognitionRef.current) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "AI",
-          text:
-            "Speech recognition is not supported in this browser. Please type your answer instead."
-        }
-      ])
-      return
-    }
+  /* ─── Type + send answer ─── */
+  async function sendTypedAnswer() {
+    if (!userInput.trim()) return
+    const text = userInput.trim()
+    setUserInput("")
+    stopSpeaking()
+    addMessage("You", text)
+    scrollToBottom()
+    await processAnswer(text)
+  }
 
+  /* ─── Skip / Next question ─── */
+  async function handleSkipQuestion() {
+    setLoading(true)
+    stopSpeaking()
     try {
-      setIsRecording(true)
-      setRecordingTime(0)
-      interimTranscriptRef.current = ""
-
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1)
-      }, 1000)
-
-      recognitionRef.current.start()
+      const { question, questionNumber } = await apiSkipQuestion()
+      setQuestionCount(questionNumber)
+      addMessage("AI", `(Previous question skipped)\n${question}`)
+      scrollToBottom()
+      await speak(question)
     } catch (error) {
-      console.error("Error starting speech recognition:", error)
-      setIsRecording(false)
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current)
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "AI",
-          text:
-            "Error: Could not start speech recognition. Please check microphone permissions."
-        }
-      ])
+      console.error("Error skipping:", error)
+      addMessage("AI", `Error: ${error.message || "Could not skip question."}`)
+    } finally {
+      setLoading(false)
     }
   }
 
-  function stopRecording() {
-    if (recognitionRef.current && isRecording) {
-      try {
-        recognitionRef.current.stop()
-      } catch {
-        // ignore
-      }
-      setIsRecording(false)
-      clearInterval(recordingIntervalRef.current)
-    }
-  }
-
-  function stopAiVoice() {
+  /* ─── View Feedback & Exit ─── */
+  async function handleViewFeedback() {
+    setLoading(true)
+    stopSpeaking()
     try {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel()
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  async function playTextAsAudio(text) {
-    try {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        // Cancel any existing speech so "Stop AI voice" is predictable
-        window.speechSynthesis.cancel()
-        const utterance = new SpeechSynthesisUtterance(text)
-        utterance.lang = "en-US"
-        window.speechSynthesis.speak(utterance)
-        return
-      }
-
-      console.warn("speechSynthesis API is not supported in this browser.")
+      const data = await apiFeedback()
+      onEndInterview({ feedback: data.feedback, stats: data.stats })
     } catch (error) {
-      console.error("Error playing audio:", error)
+      console.error("Error getting feedback:", error)
+      addMessage("AI", `Error getting feedback: ${error.message}`)
+      setLoading(false)
     }
   }
 
@@ -286,75 +318,19 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
-  useEffect(() => {
-    if (!pendingTranscript) return
-
-    const process = async () => {
-      await processAnswerText(pendingTranscript)
-      setPendingTranscript(null)
-    }
-
-    process()
-    // We intentionally only depend on pendingTranscript here to avoid
-    // reinitializing recognition or changing its handlers.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingTranscript])
-
-  async function processAnswerText(answerText) {
-    if (!answerText || !answerText.trim()) return
-
-    setLoading(true)
-
-    try {
-      await postAnswer(answerText)
-
-      // Store session data (we don't have separate "feedback" anymore; we store next question as AI response)
-      const answeredQuestion = lastQuestion || `Question ${questionCount}`
-
-      const nextQuestion = await fetchNextQuestion()
-      setMessages((prev) => [...prev, { sender: "AI", text: nextQuestion }])
-      setLastQuestion(nextQuestion)
-      setQuestionCount((prev) => prev + 1)
-
-      const newData = [
-        ...sessionData,
-        { question: answeredQuestion, answer: answerText, feedback: nextQuestion }
-      ]
-      setSessionData(newData)
-
-      await playTextAsAudio(nextQuestion)
-    } catch (error) {
-      console.error("Error sending answer:", error)
-      setMessages((prev) => [
-        ...prev,
-        { sender: "AI", text: `Error: ${error.message || "Could not process your answer."}` }
-      ])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function sendAnswer() {
-    if (!userInput.trim()) return
-
-    const text = userInput
-    setUserInput("")
-    setMessages((prev) => [...prev, { sender: "You", text }])
-    await processAnswerText(text)
-  }
-
+  /* ─── Render ─── */
   return (
     <div className="interview-page">
       <div className="interview-header">
-        <button className="back-button" onClick={onBack}>
+        <button className="back-button" onClick={() => { stopSpeaking(); onBack() }}>
           ← Back
         </button>
-        <h1>Interview Practice</h1>
+        <h1>TalkScout Interview</h1>
         <p className="question-counter">Question {questionCount}</p>
       </div>
 
       <div className="interview-container">
-        <div className="chat-box">
+        <div className="chat-box" ref={chatBoxRef}>
           {messages.map((msg, index) => (
             <div
               key={index}
@@ -363,7 +339,6 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
               <strong>{msg.sender}:</strong> {msg.text}
             </div>
           ))}
-
           {loading && <p className="loading">TalkScout is thinking...</p>}
         </div>
 
@@ -373,28 +348,28 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
               <button
                 className="record-button"
                 onClick={startRecording}
-                disabled={loading}
+                disabled={loading || !sessionStarted}
               >
                 🎤 Start Recording
               </button>
             ) : (
               <button className="record-button recording" onClick={stopRecording}>
-                ⏹ Stop ({formatTime(recordingTime)})
+                ⏹ Stop Recording ({formatTime(recordingTime)})
               </button>
             )}
+
+            {isSpeaking && (
+              <button className="stop-voice-button" onClick={stopSpeaking}>
+                🔇 Stop AI Voice
+              </button>
+            )}
+
             <button
               className="next-button"
-              onClick={stopAiVoice}
-              disabled={loading}
-            >
-              🔇 Stop AI Voice
-            </button>
-            <button
-              className="next-button"
-              onClick={getQuestion}
+              onClick={handleSkipQuestion}
               disabled={loading || isRecording}
             >
-              ❓ Next Question
+              ⏭ Next Question
             </button>
           </div>
 
@@ -402,11 +377,12 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
             <input
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTypedAnswer() } }}
               placeholder="Or type your answer here..."
               disabled={isRecording || loading}
             />
             <button
-              onClick={sendAnswer}
+              onClick={sendTypedAnswer}
               disabled={isRecording || !userInput.trim() || loading}
             >
               Send
@@ -415,38 +391,15 @@ function InterviewPage({ topic = "general", onEndInterview, onBack, onOpenFeedba
 
           <div className="interview-actions">
             <button
-              className="feedback-button"
-              onClick={onOpenFeedback}
-            >
-              📝 Give Feedback
-            </button>
-            <button
               className="end-interview-button"
-              onClick={() => onEndInterview(sessionData)}
+              onClick={handleViewFeedback}
+              disabled={loading || isRecording}
             >
               📊 View Feedback & Exit
             </button>
           </div>
         </div>
       </div>
-
-      {feedbackEntries && feedbackEntries.length > 0 && (
-        <div className="feedback-list">
-          <h2>Submitted Feedback</h2>
-          {feedbackEntries.map((entry) => (
-            <div key={entry.id} className="feedback-entry">
-              <div className="feedback-stars">
-                {[1,2,3,4,5].map((n) => (
-                  <span key={n} className={n <= entry.rating ? "star active" : "star"}>★</span>
-                ))}
-              </div>
-              <p className="feedback-text">{entry.text}</p>
-              <small className="feedback-date">{new Date(entry.createdAt).toLocaleString()}</small>
-            </div>
-          ))}
-        </div>
-      )}
-
     </div>
   )
 }
