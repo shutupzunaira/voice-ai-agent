@@ -29,14 +29,14 @@ Both IPv4 and IPv6 localhost are properly configured.
 | Service | Port | Protocol | Status |
 |---------|------|----------|--------|
 | Backend (Express) | 3001 | HTTP/TCP | ✅ Open |
-| Frontend (Vite) | 5174+ | HTTP/TCP | ✅ Open |
+| Frontend (Vite) | 5176 | HTTP/TCP | ✅ Open |
 | Uploads | /backend/uploads | Filesystem | ✅ Ready |
 
 ### Port Availability Check
 ```bash
 # Check if port is in use
 lsof -i :3001
-lsof -i :5174
+lsof -i :5176
 
 # Kill process on port (if needed)
 lsof -ti :3001 | xargs kill -9
@@ -61,7 +61,7 @@ curl http://localhost:3001/api/behavioral
 ### Frontend Access
 ```bash
 # Check if frontend is responding
-curl http://localhost:5174
+curl http://localhost:5176
 ```
 
 ---

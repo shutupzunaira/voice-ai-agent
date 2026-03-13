@@ -11,7 +11,7 @@ bash /Users/admin/Documents/Projects/voice-ai-agent/check-firewall.sh
 **Expected Output**:
 - ✅ Firewall: Allow all incoming connections
 - ✅ Backend (port 3001): Available
-- ✅ Frontend (port 5174): Available
+- ✅ Frontend (port 5176): Available
 - ✅ localhost (127.0.0.1): configured
 - ✅ IPv6 localhost (::1): configured
 - ✅ Backend server running
@@ -90,16 +90,16 @@ PORT=3002 node server.js
 
 ---
 
-### Issue: "Frontend not loading (Port 5174)"
+### Issue: "Frontend not loading (Port 5176)"
 
 **Step 1: Check if frontend is running**
 ```bash
-lsof -i :5174,5175,5176,5177
+lsof -i :5176,5177,5178,5179
 ```
 **Expected**: Should show `npm` or `node` process
 
 **Step 2: Try alternative ports**
-Vite tries ports 5174, 5175, 5176, 5177 automatically
+Vite is configured for strict port 5176. If 5176 is in use, it will fail. Check if another process is using it.
 
 **Step 3: Check logs**
 ```bash
