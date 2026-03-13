@@ -384,7 +384,7 @@ async function generateText(contents) {
 
 /* ─────────────── Urgency Classification Logic ─────────────── */
 function classifyUrgency(session) {
-  const { redFlagsPresent, severity, duration, pregnant, riskFactors } = session.patientData
+  const { redFlagsPresent, severity, pregnant, riskFactors } = session.patientData
   
   // Emergency: red flags detected
   if (redFlagsPresent) return "EMERGENCY"
@@ -394,13 +394,58 @@ function classifyUrgency(session) {
     return "URGENT"
   }
   
-  // Soon: persistent moderate symptoms
-  if (severity >= 5 && similarity >= 6) {
+  // Soon: moderate symptoms
+  if (severity >= 5) {
     return "SOON"
   }
   
   // Routine: mild stable issues
   return "ROUTINE"
+}
+
+// Simple rule-based fallback responder when AI services are unavailable
+function generateRuleBasedReply(userAnswer, session) {
+  const lower = (userAnswer || "").toLowerCase()
+  const emergencyKeywords = [
+    "chest pain",
+    "trouble breathing",
+    "can't breathe",
+    "shortness of breath",
+    "severe bleeding",
+    "stroke",
+    "faint",
+    "unconscious",
+    "suicidal",
+    "self-harm",
+    "seizure",
+    "confusion",
+    "severe headache",
+    "tightness in chest"
+  ]
+
+  if (emergencyKeywords.some(k => lower.includes(k))) {
+    session.triageLevel = "EMERGENCY"
+    session.escalationAction = "emergency"
+    return "This sounds like a medical emergency. Please call your local emergency number (e.g., 911) immediately and seek immediate care."
+  }
+
+  const followUpPatterns = [
+    { pattern: /\b(fever|temperature)\b/, question: "How high is your fever and how long have you had it?" },
+    { pattern: /\b(pain|ache|hurt|sore)\b/, question: "Where is the pain located and how severe is it on a scale of 1-10?" },
+    { pattern: /\b(cough|coughing)\b/, question: "Is your cough dry or are you bringing up phlegm?" },
+    { pattern: /\b(nausea|vomit|vomiting)\b/, question: "Have you been able to keep fluids down or are you vomiting frequently?" },
+    { pattern: /\b(dizzy|dizziness|lightheaded)\b/, question: "Do you feel dizzy all the time or only when you stand up?" },
+    { pattern: /\b(headache|migraine)\b/, question: "Is your headache constant and does it worsen with light or sound?" },
+    { pattern: /\b(stomach|abdominal|belly)\b/, question: "Is the discomfort in your stomach constant, and does anything make it better or worse?" }
+  ]
+
+  for (const item of followUpPatterns) {
+    if (item.pattern.test(lower)) {
+      return item.question
+    }
+  }
+
+  return "Can you tell me when these symptoms started and whether anything makes them better or worse?"
 }
 
 // Helper function to get session or create error response
@@ -900,7 +945,20 @@ app.post("/api/triage/answer", async (req, res) => {
       
       res.json(responseObject)
     } else {
-      // NO TOOL EXECUTED - Generate AI response with full context
+      // NO TOOL EXECUTED - Use AI if available, otherwise fall back to a simple rule-based responder.
+      if (!hasAnyKey()) {
+        const fallback = generateRuleBasedReply(userAnswer, session)
+        session.conversationHistory.push({
+          role: "assistant",
+          parts: [{ text: fallback }]
+        })
+
+        responseObject.nextQuestion = fallback
+        responseObject.questionType = "rule_based"
+        responseObject.aiGenerated = false
+        return res.json(responseObject)
+      }
+
       try {
         const systemPrompt = `You are CliniQ, a professional medical triage assistant. You are empathetic, attentive, and focused on patient safety.
 
@@ -953,24 +1011,26 @@ RESPOND WITH ONLY:
           res.json(responseObject)
         } else {
           console.warn("⚠️ AI returned empty response")
-          const fallback = "Can you tell me more about when these symptoms started and how severe they are on a scale of 1-10?"
+          const fallback = generateRuleBasedReply(userAnswer, session)
           session.conversationHistory.push({
             role: "assistant",
             parts: [{ text: fallback }]
           })
           responseObject.nextQuestion = fallback
-          responseObject.questionType = "fallback"
+          responseObject.questionType = "rule_based"
+          responseObject.aiGenerated = false
           res.json(responseObject)
         }
       } catch (error) {
         console.error("❌ AI generation error:", error.message)
-        const fallback = "I'm having trouble connecting to my reasoning. Please describe your symptoms again or try rephrasing your question."
+        const fallback = generateRuleBasedReply(userAnswer, session)
         session.conversationHistory.push({
           role: "assistant",
           parts: [{ text: fallback }]
         })
         responseObject.nextQuestion = fallback
-        responseObject.questionType = "error_fallback"
+        responseObject.questionType = "rule_based"
+        responseObject.aiGenerated = false
         responseObject.error = error.message
         // Return success so the frontend can display the message without showing a network error
         res.json(responseObject)
