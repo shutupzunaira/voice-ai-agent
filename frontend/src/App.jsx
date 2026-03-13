@@ -2,14 +2,19 @@ import { useState } from "react"
 import "./App.css"
 import HomePage from "./pages/HomePage"
 import TriagePage from "./pages/TriagePage"
+import BookingPage from "./pages/BookingPage"
 
 function App() {
-  const [currentPage, setCurrentPage] = useState("home") // home or triage
+  const [currentPage, setCurrentPage] = useState("home") // home, triage, booking
   const [triageMode, setTriageMode] = useState("general")
 
   const handleStartInterview = (mode) => {
     setTriageMode(mode)
     setCurrentPage("triage")
+  }
+
+  const handleBookAppointment = () => {
+    setCurrentPage("booking")
   }
 
   const handleBackToHome = () => {
@@ -19,7 +24,10 @@ function App() {
   return (
     <div className="app-container">
       {currentPage === "home" && (
-        <HomePage onStartInterview={handleStartInterview} />
+        <HomePage
+          onStartInterview={handleStartInterview}
+          onBookAppointment={handleBookAppointment}
+        />
       )}
       {currentPage === "triage" && (
         <TriagePage
@@ -27,6 +35,9 @@ function App() {
           onEndSession={handleBackToHome}
           onBack={handleBackToHome}
         />
+      )}
+      {currentPage === "booking" && (
+        <BookingPage onBack={handleBackToHome} />
       )}
     </div>
   )

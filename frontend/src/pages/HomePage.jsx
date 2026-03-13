@@ -1,7 +1,7 @@
 import "../styles/HomePage.css"
 import { useEffect, useState } from "react"
 
-function HomePage({ onStartInterview }) {
+function HomePage({ onStartInterview, onBookAppointment }) {
   const [showOptions, setShowOptions] = useState(false)
 
   return (
@@ -40,7 +40,7 @@ function HomePage({ onStartInterview }) {
       </div>
 
       <div className="home-intro">
-        <p>Quick health evaluation to determine care urgency and next steps for your condition.</p>
+        <p>Quick health evaluation with AI assistance. Book appointments, check availability, and manage your care through natural conversation.</p>
       </div>
 
       {!showOptions ? (
@@ -48,6 +48,9 @@ function HomePage({ onStartInterview }) {
           <div className="home-start">
             <button className="start-button" onClick={() => setShowOptions(true)}>
               Start Medical Assessment
+            </button>
+            <button className="booking-button" onClick={onBookAppointment}>
+              📅 Book Appointment
             </button>
           </div>
 
@@ -57,7 +60,10 @@ function HomePage({ onStartInterview }) {
               <li>⚡ Rapid triage assessment with AI assistance</li>
               <li>🩺 Professional medical evaluation and routing</li>
               <li>🎤 Voice and text input options</li>
-              <li>🔐 Confidential and secure health information handling</li>
+              <li>� Conversational appointment booking</li>
+              <li>🔄 Easy rescheduling and cancellation</li>
+              <li>ℹ️ Real-time clinic information and availability</li>
+              <li>�🔐 Confidential and secure health information handling</li>
             </ul>
           </div>
         </>
@@ -67,19 +73,19 @@ function HomePage({ onStartInterview }) {
             <div className="assessment-card" onClick={() => onStartInterview('general')}>
               <h3>🩺 General Health Assessment</h3>
               <p>Evaluate general health concerns and determine appropriate care level</p>
-              <p className="assessment-count">AI-powered triage • Voice/text support</p>
+              <p className="assessment-count">AI-powered triage • Voice/text support • Appointment booking</p>
             </div>
 
             <div className="assessment-card" onClick={() => onStartInterview('urgent')}>
               <h3>🚨 Urgent Care Evaluation</h3>
               <p>Assess potentially serious symptoms requiring immediate attention</p>
-              <p className="assessment-count">Emergency detection • Priority routing</p>
+              <p className="assessment-count">Emergency detection • Priority routing • Urgent booking</p>
             </div>
 
             <div className="assessment-card" onClick={() => onStartInterview('mental')}>
               <h3>🧠 Mental Health Screening</h3>
               <p>Initial assessment for mental health concerns and crisis support</p>
-              <p className="assessment-count">Crisis detection • Support resources</p>
+              <p className="assessment-count">Crisis detection • Support resources • Specialized care booking</p>
             </div>
           </div>
 

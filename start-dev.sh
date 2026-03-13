@@ -117,7 +117,7 @@ else
 fi
 
 # Test frontend
-FRONTEND_PORT=${FRONTEND_PORT:-5176}
+FRONTEND_PORT=${FRONTEND_PORT:-5175}
 if curl -s http://localhost:$FRONTEND_PORT &>/dev/null; then
     echo -e "${GREEN}✅ Frontend responding${NC}"
 else
@@ -134,7 +134,7 @@ echo -e "${NC}"
 
 echo -e "${BLUE}Network Configuration:${NC}"
 echo "  Backend:  http://localhost:3001"
-echo "  Frontend: http://localhost:${FRONTEND_PORT:-5176}"
+echo "  Frontend: http://localhost:${FRONTEND_PORT:-5175}"
 echo ""
 
 echo -e "${BLUE}Firewall Status:${NC}"

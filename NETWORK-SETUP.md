@@ -9,7 +9,7 @@ Your system is properly configured:
 ```
 ✅ Firewall: Allow all incoming connections
 ✅ Backend (port 3001): Running and accessible
-✅ Frontend (port 5176): Running and accessible  
+✅ Frontend (port 5175): Running and accessible  
 ✅ localhost (127.0.0.1): Configured and responding
 ✅ IPv6 localhost (::1): Configured and responding
 ```
@@ -85,8 +85,8 @@ cat /etc/hosts | grep localhost
 
 ### Frontend Server
 - **Host**: localhost (127.0.0.1)
-- **Port**: 5176 (Strict port)
-- **URL**: http://localhost:5176
+- **Port**: 5175 (Strict port)
+- **URL**: http://localhost:5175
 - **Framework**: React + Vite
 
 ### CORS Settings

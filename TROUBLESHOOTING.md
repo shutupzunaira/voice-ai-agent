@@ -90,16 +90,16 @@ PORT=3002 node server.js
 
 ---
 
-### Issue: "Frontend not loading (Port 5176)"
+### Issue: "Frontend not loading (Port 5175)"
 
 **Step 1: Check if frontend is running**
 ```bash
-lsof -i :5176,5177,5178,5179
+lsof -i :5175,5176,5177,5178
 ```
 **Expected**: Should show `npm` or `node` process
 
 **Step 2: Try alternative ports**
-Vite is configured for strict port 5176. If 5176 is in use, it will fail. Check if another process is using it.
+Vite is configured for strict port 5175. If 5175 is in use, it will fail. Check if another process is using it.
 
 **Step 3: Check logs**
 ```bash

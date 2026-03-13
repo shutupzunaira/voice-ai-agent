@@ -23,10 +23,14 @@ const VERTEX_AI_REGION = process.env.VERTEX_AI_REGION || "us-central1"
 const Medical_DB = {
   appointments: [],
   doctors: [
-    { id: "dr_smith", name: "Dr. Sarah Smith", specialty: "General Practice", available: true },
-    { id: "dr_johnson", name: "Dr. Michael Johnson", specialty: "Cardiology", available: true },
-    { id: "dr_lee", name: "Dr. Emily Lee", specialty: "Pediatrics", available: true },
-    { id: "dr_patel", name: "Dr. Rajesh Patel", specialty: "Orthopedics", available: false }
+    { id: "dr_sharma", name: "Dr. Priya Sharma", specialty: "General Practice", available: true },
+    { id: "dr_kumar", name: "Dr. Arjun Kumar", specialty: "Cardiology", available: true },
+    { id: "dr_patel", name: "Dr. Meera Patel", specialty: "Pediatrics", available: true },
+    { id: "dr_singh", name: "Dr. Vikram Singh", specialty: "Orthopedics", available: false },
+    { id: "dr_gupta", name: "Dr. Anjali Gupta", specialty: "Dermatology", available: true },
+    { id: "dr_verma", name: "Dr. Rohan Verma", specialty: "Neurology", available: true },
+    { id: "dr_reddy", name: "Dr. Kavita Reddy", specialty: "Gynecology", available: true },
+    { id: "dr_chopra", name: "Dr. Amit Chopra", specialty: "Ophthalmology", available: true }
   ],
   availableSlots: {
     "2026-03-14": ["09:00", "09:30", "10:00", "10:30", "14:00", "14:30", "15:00"],
@@ -46,6 +50,13 @@ const Medical_DB = {
   }
 }
 
+/* ─────────────── Helper Functions ─────────────── */
+function getRandomAvailableDoctor() {
+  const availableDoctors = Medical_DB.doctors.filter(d => d.available)
+  if (availableDoctors.length === 0) return "dr_sharma" // fallback
+  return availableDoctors[Math.floor(Math.random() * availableDoctors.length)].id
+}
+
 /* ─────────────── Medical Tool Functions (Real Execution) ─────────────── */
 function checkAvailableSlots(date) {
   const slots = Medical_DB.availableSlots[date]
@@ -58,7 +69,7 @@ function checkAvailableSlots(date) {
   return { success: true, slots, date }
 }
 
-function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID = "dr_smith") {
+function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID = "dr_sharma") {
   // Validate date/time
   const slots = Medical_DB.availableSlots[date]
   if (!slots || !slots.includes(time)) {
@@ -90,7 +101,7 @@ function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID 
   return {
     success: true,
     appointmentID,
-    message: `Appointment confirmed for ${patientName} on ${date} at ${time} with ${Medical_DB.doctors.find(d => d.id === doctorID)?.name || 'Dr. Smith'}`,
+    message: `Appointment confirmed for ${patientName} on ${date} at ${time} with ${Medical_DB.doctors.find(d => d.id === doctorID)?.name || 'Dr. Priya Sharma'}`,
     appointment
   }
 }
@@ -197,7 +208,9 @@ function startTriageSession() {
       allergies: []
     },
     escalationAction: null,
-    appointmentData: null
+    appointmentData: null,
+    awaitingSlotSelection: false,
+    lastSlotDate: null
   }
   triageSessions.set(sessionId, session)
   return sessionId
@@ -714,6 +727,19 @@ app.get("/api/test/appointments", (req, res) => {
   })
 })
 
+// Debug endpoint: view session state (development only)
+app.get("/api/debug/session", (req, res) => {
+  const { sessionId } = req.query
+  if (!sessionId) {
+    return res.status(400).json({ success: false, error: "Missing sessionId" })
+  }
+  const session = triageSessions.get(sessionId)
+  if (!session) {
+    return res.status(404).json({ success: false, error: "Session not found" })
+  }
+  res.json({ success: true, session })
+})
+
 app.get("/", (req, res) => res.send("CliniQ - Medical Voice Agent - HIPAA Ready"))
 
 app.get("/health", (req, res) => {
@@ -726,6 +752,200 @@ app.get("/health", (req, res) => {
     openaiConfigured: !!OPENAI_KEY,
     fallbackChain: "Vertex AI → Gemini → OpenAI"
   })
+})
+
+/* ── PATIENT: Book Appointment ── */
+app.post("/api/patient/book-appointment", (req, res) => {
+  try {
+    const { patientName, phoneNumber, email, date, time, reason, doctorId, visitType = "in_person" } = req.body
+    
+    // Validate required fields
+    if (!patientName || !phoneNumber || !date || !time || !reason) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields",
+        required: ["patientName", "phoneNumber", "date", "time", "reason"],
+        provided: { patientName, phoneNumber, date, time, reason }
+      })
+    }
+    
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid date format. Use YYYY-MM-DD format."
+      })
+    }
+    
+    // Validate time format (HH:MM)
+    const timeRegex = /^\d{2}:\d{2}$/
+    if (!timeRegex.test(time)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid time format. Use HH:MM format (24-hour)."
+      })
+    }
+    
+    // Validate phone number format
+    const phoneRegex = /^\+?[\d\s\-\(\)]{10,}$/
+    if (!phoneRegex.test(phoneNumber)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid phone number format."
+      })
+    }
+    
+    // Check if date is in the future
+    const appointmentDate = new Date(`${date}T${time}`)
+    const now = new Date()
+    if (appointmentDate <= now) {
+      return res.status(400).json({
+        success: false,
+        error: "Appointment must be scheduled for a future date and time."
+      })
+    }
+    
+    // Check clinic hours (9 AM - 5 PM, Monday-Saturday)
+    const dayOfWeek = appointmentDate.getDay() // 0 = Sunday, 6 = Saturday
+    if (dayOfWeek === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Clinic is closed on Sundays."
+      })
+    }
+    
+    const hour = parseInt(time.split(':')[0])
+    if (hour < 9 || hour > 16) {
+      return res.status(400).json({
+        success: false,
+        error: "Clinic hours are 9:00 AM - 5:00 PM, Monday-Saturday."
+      })
+    }
+    
+    // Validate doctor
+    const selectedDoctor = doctorId ? 
+      Medical_DB.doctors.find(d => d.id === doctorId) : 
+      Medical_DB.doctors.find(d => d.available)
+    
+    if (!selectedDoctor) {
+      return res.status(400).json({
+        success: false,
+        error: "No available doctors found."
+      })
+    }
+    
+    // Book the appointment
+    const bookingResult = bookAppointment(
+      patientName, 
+      phoneNumber, 
+      date, 
+      time, 
+      reason, 
+      selectedDoctor.id
+    )
+    
+    if (!bookingResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: bookingResult.error
+      })
+    }
+    
+    // Return success response
+    res.json({
+      success: true,
+      message: "Appointment booked successfully!",
+      appointment: {
+        id: bookingResult.appointmentID,
+        patientName,
+        phoneNumber,
+        email,
+        date,
+        time,
+        reason,
+        doctor: {
+          id: selectedDoctor.id,
+          name: selectedDoctor.name,
+          specialty: selectedDoctor.specialty
+        },
+        visitType,
+        status: "confirmed",
+        bookedAt: new Date().toISOString(),
+        confirmationMessage: `Your appointment is confirmed for ${date} at ${time} with ${selectedDoctor.name}. Please arrive 15 minutes early.`
+      },
+      clinicInfo: {
+        address: "123 Medical Center Drive, Healthcare City",
+        phone: "(555) 123-4567",
+        hours: Medical_DB.clinicHours
+      }
+    })
+    
+  } catch (error) {
+    console.error("Error booking patient appointment:", error)
+    res.status(500).json({
+      success: false,
+      error: "Failed to book appointment",
+      message: error.message
+    })
+  }
+})
+
+/* ── PATIENT: Check Available Slots ── */
+app.get("/api/patient/available-slots", (req, res) => {
+  try {
+    const { date } = req.query
+    
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        error: "Date parameter is required (format: YYYY-MM-DD)"
+      })
+    }
+    
+    const slotsResult = checkAvailableSlots(date)
+    
+    if (!slotsResult.success) {
+      return res.status(404).json({
+        success: false,
+        error: slotsResult.error
+      })
+    }
+    
+    res.json({
+      success: true,
+      date,
+      availableSlots: slotsResult.slots,
+      clinicHours: Medical_DB.clinicHours,
+      doctors: Medical_DB.doctors.filter(d => d.available)
+    })
+    
+  } catch (error) {
+    console.error("Error checking available slots:", error)
+    res.status(500).json({
+      success: false,
+      error: "Failed to check available slots",
+      message: error.message
+    })
+  }
+})
+
+/* ── PATIENT: Get Doctors ── */
+app.get("/api/patient/doctors", (req, res) => {
+  try {
+    res.json({
+      success: true,
+      doctors: Medical_DB.doctors,
+      clinicHours: Medical_DB.clinicHours
+    })
+  } catch (error) {
+    console.error("Error getting doctors:", error)
+    res.status(500).json({
+      success: false,
+      error: "Failed to get doctors list",
+      message: error.message
+    })
+  }
 })
 
 /* ── Start triage session ── */
@@ -844,68 +1064,182 @@ app.post("/api/triage/answer", async (req, res) => {
     // ╔═══════════════════════════════════════════╗
     // ║ AUTONOMOUS TOOL CALLING FOR APPOINTMENTS ║
     // ╚═══════════════════════════════════════════╝
-    
+
     let toolExecuted = false
     let toolResult = null
     let toolName = null
-    
-    // 1. DETECT: Book Request Pattern
-    const bookPatterns = /(\bbook\b|\bschedule\b|\bmake\b|\bget\b)\s*(\ban\s*)?appointment|appointment\s*(for|on|at|next)/i
-    if (bookPatterns.test(userAnswer)) {
+
+    // If we asked the user to pick a time slot, allow a bare time reply to book it
+    const extractedTime = extractTime(userAnswer)
+    const isTimeOnlyResponse = /^\s*(\d{1,2})(:\d{2})?\s*(am|pm)?\s*\.?\s*$/i.test(userAnswer)
+    if (session.awaitingSlotSelection && extractedTime && isTimeOnlyResponse) {
+      const bookDate = session.lastSlotDate || getNextBusinessDay()
+      toolName = "book_appointment"
+      toolResult = bookAppointment(
+        session.patientData?.name || "Patient",
+        session.patientData?.phone || "555-0000",
+        bookDate,
+        extractedTime,
+        session.chiefComplaint || "General consultation",
+        getRandomAvailableDoctor()
+      )
+      toolExecuted = true
+      session.awaitingSlotSelection = false
+      session.lastSlotDate = null
+      console.log("✅ Booking appointment from time-only reply")
+    }
+
+    // 1. DETECT: Book Request Pattern (Enhanced)
+    const bookPatterns = /(\bbook\b|\bschedule\b|\bmake\b|\bget\b|\bset\b|\bwant\b|\bneed\b)\s*(\ban\s*)?appointment|\bappointment\s*(for|on|at|next|tomorrow|today)|\bi'd\s+like\s+to\s+(book|schedule|make)|\bcan\s+i\s+(book|get|schedule|make)|\bappointment\s+please/i
+    if (!toolExecuted && bookPatterns.test(userAnswer)) {
+      console.log("📅 Detected appointment booking request")
+
+      // Extract patient info from session or ask for it
+      let patientName = session.patientData?.name || "Patient"
+      let patientPhone = session.patientData?.phone || "555-0000"
+
+      // Try to extract date and time from user input
       const extractedDate = extractDate(userAnswer)
       const extractedTime = extractTime(userAnswer)
-      
+
       if (extractedDate && extractedTime) {
-        // EXECUTE: Tool function
+        // Have both date and time - book immediately
         toolName = "book_appointment"
-        const patientName = session.patientData?.name || "Patient"
-        toolResult = bookAppointment(patientName, patientPhone || "555-0000", extractedDate, extractedTime, session.chiefComplaint)
+        toolResult = bookAppointment(patientName, patientPhone, extractedDate, extractedTime, session.chiefComplaint || "General consultation", getRandomAvailableDoctor())
         toolExecuted = true
+        console.log("✅ Booking appointment with extracted date/time")
+      } else if (extractedDate) {
+        // Have date but no time - check available slots
+        toolName = "check_slots"
+        toolResult = checkAvailableSlots(extractedDate)
+        toolExecuted = true
+        console.log("📋 Checking available slots for extracted date")
+      } else {
+        // No date/time extracted - check tomorrow's slots
+        const tomorrow = getNextBusinessDay()
+        toolName = "check_slots"
+        toolResult = checkAvailableSlots(tomorrow)
+        toolExecuted = true
+        console.log("📋 No date specified, checking tomorrow's slots")
       }
     }
-    
-    // 2. DETECT: Reschedule Request Pattern
-    const reschedulePatterns = /reschedule|move|change.*appointment|different.*time/i
+
+    // 2. DETECT: Reschedule Request Pattern (Enhanced)
+    const reschedulePatterns = /\breschedule\b|\bmove\b|\bchange\b.*\bappointment\b|\bdifferent\b.*\btime\b|\bnew\b.*\btime\b|\bchange\b.*\bdate\b/i
     if (reschedulePatterns.test(userAnswer) && !toolExecuted) {
+      console.log("🔄 Detected reschedule request")
+
+      // Find patient's last appointment
       const lastAppointment = Medical_DB.appointments
-        .filter(a => a.phoneNumber === patientPhone && a.status === "confirmed")
+        .filter(a => a.phoneNumber === (session.patientData?.phone || "555-0000") && a.status === "confirmed")
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0]
-      
+
       if (lastAppointment) {
         const extractedDate = extractDate(userAnswer)
         const extractedTime = extractTime(userAnswer)
-        
+
         if (extractedDate && extractedTime) {
           toolName = "reschedule_appointment"
           toolResult = rescheduleAppointment(lastAppointment.appointmentID, extractedDate, extractedTime)
           toolExecuted = true
+          console.log("✅ Rescheduling appointment")
+        } else {
+          // Show current appointment and ask for new date/time
+          toolName = "check_current_appointment"
+          toolResult = {
+            success: true,
+            currentAppointment: lastAppointment,
+            message: `Your current appointment is on ${lastAppointment.date} at ${lastAppointment.time}. What date and time would you prefer instead?`
+          }
+          toolExecuted = true
         }
+      } else {
+        toolResult = {
+          success: false,
+          error: "I couldn't find any confirmed appointments for you. Would you like to book a new appointment instead?"
+        }
+        toolExecuted = true
       }
     }
-    
-    // 3. DETECT: Cancel Request Pattern
-    const cancelPatterns = /cancel|remove|delete.*appointment|don't need/i
+
+    // 3. DETECT: Cancel Request Pattern (Enhanced)
+    const cancelPatterns = /\bcancel\b|\bremove\b|\bdelete\b.*\bappointment\b|\bdon't\s+need\b|\bno\s+longer\b.*\bneed\b/i
     if (cancelPatterns.test(userAnswer) && !toolExecuted) {
+      console.log("❌ Detected cancel request")
+
       const lastAppointment = Medical_DB.appointments
-        .filter(a => a.phoneNumber === patientPhone && a.status === "confirmed")
+        .filter(a => a.phoneNumber === (session.patientData?.phone || "555-0000") && a.status === "confirmed")
         .sort((a, b) => new Date(b.date) - new Date(a.date))[0]
-      
+
       if (lastAppointment) {
         toolName = "cancel_appointment"
         toolResult = cancelAppointment(lastAppointment.appointmentID)
         toolExecuted = true
+        console.log("✅ Cancelling appointment")
+      } else {
+        toolResult = {
+          success: false,
+          error: "I couldn't find any confirmed appointments for you to cancel."
+        }
+        toolExecuted = true
+      }
+    }
+
+    // 4. DETECT: Slot Availability Request (Enhanced)
+    const availabilityPatterns = /\b(available|slots?|appointments?|open|free)\b.*\b(when|what|next)|\bwhat\s+times\b|\bwhen\s+can\s+i\b|\bnext\s+.*\b(opening|available|appointment)|\bshow\s+me\s+.*\btimes\b/i
+    if (availabilityPatterns.test(userAnswer) && !toolExecuted) {
+      console.log("📅 Detected availability check request")
+
+      const extractedDate = extractDate(userAnswer)
+      const targetDate = extractedDate || getNextBusinessDay()
+
+      toolName = "check_slots"
+      toolResult = checkAvailableSlots(targetDate)
+      toolExecuted = true
+      console.log(`📋 Checking slots for ${targetDate}`)
+    }
+
+    // 6. DETECT: Patient Information (Name/Phone)
+    const namePatterns = /\bmy\s+name\s+is\b|\bi'm\b|\bi\s+am\b|\bname\b.*\b\w+|\bcall\s+me\b/i
+    const phonePatterns = /\bphone\b|\bnumber\b|\bcontact\b|\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4}/i
+
+    if (namePatterns.test(userAnswer) && !session.patientData?.name) {
+      // Extract name
+      const nameMatch = userAnswer.match(/(?:my\s+name\s+is|i'm|i\s+am|call\s+me)\s+([A-Za-z\s]+)/i)
+      if (nameMatch) {
+        session.patientData.name = nameMatch[1].trim()
+        toolName = "collect_info"
+        toolResult = {
+          success: true,
+          message: `Thanks, ${session.patientData.name}! I've noted your name.`
+        }
+        toolExecuted = true
+      }
+    }
+
+    if (phonePatterns.test(userAnswer) && !session.patientData?.phone) {
+      // Extract phone number
+      const phoneMatch = userAnswer.match(/(\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4})/)
+      if (phoneMatch) {
+        session.patientData.phone = phoneMatch[1]
+        toolName = "collect_info"
+        toolResult = {
+          success: true,
+          message: `Got it! I've saved your phone number: ${session.patientData.phone}`
+        }
+        toolExecuted = true
       }
     }
     
-    // 4. DETECT: Slot Availability Request
-    const availabilityPatterns = /\b(available|slots?|appointments?)\b|\bwhen\s+can\s+i\b|\bwhat\s+times\b.*\b(available|open|appointment)\b|\bnext\s+.*\b(opening|available)\b/i
-    if (availabilityPatterns.test(userAnswer) && !toolExecuted) {
-      const nextDate = getNextBusinessDay()
-      toolName = "check_slots"
-      toolResult = checkAvailableSlots(nextDate)
-      toolExecuted = true
+    // Keep track of slot selection state so time-only replies can book automatically
+    if (toolExecuted && toolName === "check_slots" && toolResult?.success) {
+      session.awaitingSlotSelection = true
+      session.lastSlotDate = toolResult.date
+    } else if (toolExecuted) {
+      session.awaitingSlotSelection = false
+      session.lastSlotDate = null
     }
-    
+
     // Build response
     const responseObject = {
       success: true,
@@ -925,22 +1259,39 @@ app.post("/api/triage/answer", async (req, res) => {
         let confirmationMsg = ""
         switch (toolName) {
           case "book_appointment":
-            confirmationMsg = `Great! I've successfully booked your appointment for ${toolResult.appointment.date} at ${toolResult.appointment.time} with Dr. ${toolResult.appointment.doctorID}. Your confirmation number is ${toolResult.appointmentID}.`
+            const doctorName = Medical_DB.doctors.find(d => d.id === toolResult.appointment.doctorID)?.name || "your doctor"
+            confirmationMsg = `✅ **Appointment Booked Successfully!**\n\n📅 Date: ${toolResult.appointment.date}\n🕐 Time: ${toolResult.appointment.time}\n👨‍⚕️ Doctor: ${doctorName}\n🆔 Confirmation #: ${toolResult.appointmentID}\n\nPlease arrive 15 minutes early. You can reschedule or cancel up to 24 hours before your appointment.`
             break
           case "reschedule_appointment":
-            confirmationMsg = `Perfect! I've rescheduled your appointment to ${toolResult.appointment.newDate} at ${toolResult.appointment.newTime}.`
+            confirmationMsg = `✅ **Appointment Rescheduled!**\n\n📅 New Date: ${toolResult.appointment.date}\n🕐 New Time: ${toolResult.appointment.time}\n🆔 Confirmation #: ${toolResult.appointment.appointmentID}\n\nYour appointment has been moved successfully.`
             break
           case "cancel_appointment":
-            confirmationMsg = `I've cancelled your appointment. Is there anything else I can help you with?`
+            confirmationMsg = `✅ **Appointment Cancelled**\n\nYour appointment has been cancelled. If you'd like to book a new appointment, just let me know what date and time works for you.`
             break
           case "check_slots":
             const slots = toolResult.slots || []
-            confirmationMsg = `Available appointment slots for ${toolResult.date}: ${slots.join(", ") || "No slots available. Please try another date."}`
+            if (slots.length > 0) {
+              confirmationMsg = `📅 **Available Times for ${toolResult.date}:**\n\n${slots.join(", ")}\n\nTo book an appointment, just tell me which time you'd prefer!`
+            } else {
+              confirmationMsg = `❌ No appointments available for ${toolResult.date}. The clinic is closed on Sundays. Would you like me to check another date?`
+            }
+            break
+          case "collect_patient_info":
+            confirmationMsg = toolResult.message
+            break
+          case "collect_info":
+            confirmationMsg = toolResult.message
+            break
+          case "clinic_info":
+            const hoursText = Object.entries(toolResult.hours)
+              .map(([day, hours]) => `${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours}`)
+              .join('\n')
+            confirmationMsg = `🏥 **${toolResult.clinicName}**\n\n📍 Address: ${toolResult.address}\n📞 Phone: ${toolResult.phone}\n\n🕐 Hours:\n${hoursText}\n\nAvailable Doctors:\n${toolResult.doctors.map(d => `• ${d.name} (${d.specialty})`).join('\n')}`
             break
         }
         responseObject.confirmationMessage = confirmationMsg
       } else {
-        responseObject.confirmationMessage = `I encountered an issue: ${toolResult.error || "Unable to process request."}`
+        responseObject.confirmationMessage = `❌ I encountered an issue: ${toolResult.error || "Unable to process your request."}\n\nPlease try again or provide different information.`
       }
       
       res.json(responseObject)
@@ -1054,36 +1405,172 @@ RESPOND WITH ONLY:
 
 /* ── Helper: Extract date from natural language ── */
 function extractDate(text) {
+  const lowerText = text.toLowerCase()
+
+  // Direct date formats
   const datePatterns = [
     /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,  // MM/DD/YYYY
-    /tomorrow/i,
-    /next\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
-    /(\d{1,2})\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i
+    /(\d{1,2})-(\d{1,2})-(\d{2,4})/,    // MM-DD-YYYY
+    /(\d{4})-(\d{2})-(\d{2})/           // YYYY-MM-DD
   ]
-  
+
   for (const pattern of datePatterns) {
-    if (pattern.test(text)) {
-      // For MVP, return next business day
-      return getNextBusinessDay()
+    const match = text.match(pattern)
+    if (match) {
+      let year, month, day
+
+      if (pattern.source.includes('YYYY-MM-DD')) {
+        // YYYY-MM-DD format
+        year = parseInt(match[1])
+        month = parseInt(match[2]) - 1 // JS months are 0-based
+        day = parseInt(match[3])
+      } else {
+        // MM/DD/YYYY or MM-DD-YYYY format
+        month = parseInt(match[1]) - 1
+        day = parseInt(match[2])
+        year = parseInt(match[3])
+        if (year < 100) year += 2000 // Convert 2-digit year
+      }
+
+      const date = new Date(year, month, day)
+      if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
+        return date.toISOString().split('T')[0]
+      }
     }
   }
+
+  // Relative dates
+  const today = new Date()
+  if (lowerText.includes('tomorrow')) {
+    const tomorrow = new Date(today)
+    tomorrow.setDate(today.getDate() + 1)
+    return tomorrow.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('today')) {
+    return today.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('next monday') || lowerText.includes('monday')) {
+    const nextMonday = new Date(today)
+    const daysUntilMonday = (1 - today.getDay() + 7) % 7 || 7
+    nextMonday.setDate(today.getDate() + daysUntilMonday)
+    return nextMonday.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('next tuesday') || lowerText.includes('tuesday')) {
+    const nextTuesday = new Date(today)
+    const daysUntilTuesday = (2 - today.getDay() + 7) % 7 || 7
+    nextTuesday.setDate(today.getDate() + daysUntilTuesday)
+    return nextTuesday.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('next wednesday') || lowerText.includes('wednesday')) {
+    const nextWednesday = new Date(today)
+    const daysUntilWednesday = (3 - today.getDay() + 7) % 7 || 7
+    nextWednesday.setDate(today.getDate() + daysUntilWednesday)
+    return nextWednesday.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('next thursday') || lowerText.includes('thursday')) {
+    const nextThursday = new Date(today)
+    const daysUntilThursday = (4 - today.getDay() + 7) % 7 || 7
+    nextThursday.setDate(today.getDate() + daysUntilThursday)
+    return nextThursday.toISOString().split('T')[0]
+  }
+
+  if (lowerText.includes('next friday') || lowerText.includes('friday')) {
+    const nextFriday = new Date(today)
+    const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
+    nextFriday.setDate(today.getDate() + daysUntilFriday)
+    return nextFriday.toISOString().split('T')[0]
+  }
+
+  // Day after tomorrow
+  if (lowerText.includes('day after tomorrow')) {
+    const dayAfterTomorrow = new Date(today)
+    dayAfterTomorrow.setDate(today.getDate() + 2)
+    return dayAfterTomorrow.toISOString().split('T')[0]
+  }
+
   return null
 }
 
 /* ── Helper: Extract time from natural language ── */
 function extractTime(text) {
+  const lowerText = text.toLowerCase()
+
+  // Direct time formats
   const timePatterns = [
     /(\d{1,2}):(\d{2})\s*(am|pm)?/i,
-    /(morning|afternoon|evening|9|10|11|12|1|2|3|4|5)\s*(am|pm)?/i
+    /(\d{1,2})\s*(am|pm)/i,
+    /(\d{1,2})\s*o'clock\s*(am|pm)?/i
   ]
-  
+
   for (const pattern of timePatterns) {
     const match = text.match(pattern)
     if (match) {
-      // For MVP, return 2:00 PM as default
-      return "14:00"
+      let hour = parseInt(match[1])
+      let minute = 0
+      let ampm = null
+
+      // Handle different capture groups based on pattern
+      if (pattern.source.includes(':')) {
+        // Pattern with colon: hour:minute am/pm
+        minute = match[2] ? parseInt(match[2]) : 0
+        ampm = match[3] ? match[3].toLowerCase() : null
+      } else {
+        // Pattern without colon: hour am/pm
+        ampm = match[2] ? match[2].toLowerCase() : null
+      }
+
+      // Convert to 24-hour format
+      if (ampm === 'pm' && hour !== 12) {
+        hour += 12
+      } else if (ampm === 'am' && hour === 12) {
+        hour = 0
+      }
+
+      // Validate hour range
+      if (hour >= 9 && hour <= 16) { // Clinic hours: 9 AM - 4 PM
+        return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+      }
     }
   }
+
+  // Common time expressions
+  const timeMappings = {
+    'morning': '09:00',
+    '9 am': '09:00',
+    '9am': '09:00',
+    '10 am': '10:00',
+    '10am': '10:00',
+    '11 am': '11:00',
+    '11am': '11:00',
+    'noon': '12:00',
+    '12 pm': '12:00',
+    '12pm': '12:00',
+    '1 pm': '13:00',
+    '1pm': '13:00',
+    '2 pm': '14:00',
+    '2pm': '14:00',
+    '3 pm': '15:00',
+    '3pm': '15:00',
+    '4 pm': '16:00',
+    '4pm': '16:00',
+    'afternoon': '14:00',
+    'early morning': '09:00',
+    'late morning': '11:00',
+    'early afternoon': '13:00',
+    'late afternoon': '15:00'
+  }
+
+  for (const [phrase, time] of Object.entries(timeMappings)) {
+    if (lowerText.includes(phrase)) {
+      return time
+    }
+  }
+
   return null
 }
 

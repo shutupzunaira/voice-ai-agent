@@ -35,11 +35,11 @@ else
     echo -e "${RED}❌ Not available${NC}"
 fi
 
-echo -n "   Frontend (port 5176): "
-if lsof -i :5176 &>/dev/null; then
+echo -n "   Frontend (port 5175): "
+if lsof -i :5175 &>/dev/null; then
     echo -e "${GREEN}✅ Available${NC}"
 else
-    echo -e "${YELLOW}⚠️  Port 5176 may be in use (Vite tries 5177, 5178, etc.)${NC}"
+    echo -e "${YELLOW}⚠️  Port 5175 may be in use (Vite tries 5176, 5177, etc.)${NC}"
 fi
 echo ""
 
@@ -75,7 +75,7 @@ else
 fi
 
 echo -n "   Frontend status: "
-if curl -s http://localhost:5176 &>/dev/null; then
+if curl -s http://localhost:5175 &>/dev/null; then
     echo -e "${GREEN}✅ Frontend responding${NC}"
 else
     echo -e "${YELLOW}⚠️  Frontend not responding (normal if starting up)${NC}"

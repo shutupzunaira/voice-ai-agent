@@ -21,12 +21,12 @@ Your TalkScout project has been completely configured for optimal firewall and n
 
 ### 3. **Port Management** ✅
 - **Backend Port (3001)**: Open and listening
-- **Frontend Port (5176)**: Open and listening
-- **Fallback Ports**: 5177, 5178, 5179 available for Vite
+- **Frontend Port (5175)**: Open and listening
+- **Fallback Ports**: 5176, 5177, 5178 available for Vite
 
 ### 4. **Service Configuration** ✅
 - **Backend Express Server**: Running on http://localhost:3001
-- **Frontend Vite Dev Server**: Running on http://localhost:5176
+- **Frontend Vite Dev Server**: Running on http://localhost:5175
 - **API Endpoints**: All responding (health, topics, questions, answers)
 
 ---
@@ -77,9 +77,9 @@ Applications Allowed:   7+ (system and development services)
 ### Localhost Binding
 ```
 127.0.0.1:3001   → Backend API (HTTP)
-127.0.0.1:5176   → Frontend UI (HTTP)
+127.0.0.1:5175   → Frontend UI (HTTP)
 ::1:3001         → Backend API (IPv6)
-::1:5176         → Frontend UI (IPv6)
+::1:5175         → Frontend UI (IPv6)
 ```
 
 ### CORS Configuration
