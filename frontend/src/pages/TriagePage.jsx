@@ -167,42 +167,71 @@ function TriagePage({ onEndSession, onBack }) {
 
   /* ─── Submit Answer ─── */
   async function submitAnswer() {
-    if (!userInput.trim() || !sessionId) return
+    if (!userInput.trim() || !sessionId) {
+      console.warn("No input or session")
+      return
+    }
 
+    const userMessage = userInput.trim()
     setLoading(true)
-    addMessage("patient", userInput)
+    addMessage("patient", userMessage)
     setUserInput("")
+    fullTranscriptRef.current = ""
 
     try {
+      console.log("📤 Sending:", userMessage)
       const res = await fetch("/api/triage/answer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, userAnswer: userInput })
+        body: JSON.stringify({ sessionId, userAnswer: userMessage })
       })
 
       const data = await res.json()
-      if (data.success) {
-        if (data.triageLevel) setTriageLevel(data.triageLevel)
+      console.log("📥 Response received:", {
+        success: data.success,
+        hasNextQuestion: !!data.nextQuestion,
+        hasConfirmation: !!data.confirmationMessage,
+        toolExecuted: data.toolExecuted,
+        aiGenerated: data.aiGenerated
+      })
 
-        if (data.nextAction === "escalate_emergency") {
-          addMessage("assistant", data.message)
-          await speak(data.message)
-          // Show emergency action needed
-          setTriageLevel("EMERGENCY")
-        } else {
-          // Continue with triage: prefer backend-provided confirmation or follow‑up
-          let assistantText =
-            data.confirmationMessage ||
-            data.nextQuestion ||
-            "Thank you for that information. Can you tell me how long this has been going on and how severe it feels on a scale from 1 to 10?"
-
-          addMessage("assistant", assistantText)
-          await speak(assistantText)
-        }
+      if (!data.success) {
+        console.error("Backend error:", data.error)
+        const errorMsg = data.error || "Unable to process response"
+        addMessage("assistant", errorMsg)
+        await speak(errorMsg)
+        return
       }
+
+      // Update triage level if provided
+      if (data.triageLevel) {
+        setTriageLevel(data.triageLevel)
+      }
+
+      // Handle emergency escalation
+      if (data.nextAction === "escalate_emergency" || data.triageLevel === "EMERGENCY") {
+        const emergencyMsg = data.message || "🚨 This appears to be a medical emergency. CALL 911 IMMEDIATELY!"
+        addMessage("assistant", emergencyMsg)
+        await speak(emergencyMsg)
+        setTriageLevel("EMERGENCY")
+        return
+      }
+
+      // Determine which message to display
+      const assistantText = 
+        data.confirmationMessage || // Tool execution confirmation
+        data.nextQuestion ||         // AI-generated next question
+        "Thank you for that information. Tell me more about your symptoms."
+
+      console.log("🎯 Displaying:", assistantText.slice(0, 80) + "...")
+      addMessage("assistant", assistantText)
+      await speak(assistantText)
+      
     } catch (error) {
-      console.error("Error submitting answer:", error)
-      addMessage("assistant", "Error processing your response. Please try again.")
+      console.error("❌ Error submitting answer:", error)
+      const errorMsg = "I'm having technical difficulties. Please try again."
+      addMessage("assistant", errorMsg)
+      await speak(errorMsg)
     } finally {
       setLoading(false)
       scrollToBottom()

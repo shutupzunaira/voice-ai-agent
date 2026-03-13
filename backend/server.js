@@ -728,7 +728,7 @@ app.get("/api/triage/initial-question", (req, res) => {
 })
 
 /* ── Process triage response and generate next question ── */
-app.post("/api/triage/answer", (req, res) => {
+app.post("/api/triage/answer", async (req, res) => {
   try {
     const { sessionId, userAnswer, patientPhone } = req.body
     const session = getSession(sessionId, res)
@@ -863,9 +863,82 @@ app.post("/api/triage/answer", (req, res) => {
       } else {
         responseObject.confirmationMessage = `I encountered an issue: ${toolResult.error || "Unable to process request."}`
       }
+      
+      res.json(responseObject)
+    } else {
+      // NO TOOL EXECUTED - Generate AI response with full context
+      try {
+        const systemPrompt = `You are CliniQ, a professional medical triage assistant. You are empathetic, attentive, and focused on patient safety.
+
+YOUR ROLE:
+- Assess symptoms to determine urgency (EMERGENCY, URGENT, SOON, or ROUTINE)
+- Ask clarifying follow-up questions based on what patient tells you
+- Never diagnose - only triage and route to appropriate care
+- Maintain patient confidentiality and use professional medical language
+
+CONVERSATION CONTEXT:
+Patient's previous symptoms and responses: ${session.conversationHistory.filter(m => m.role === "user").map(m => m.parts[0].text).join(" | ")}
+
+IMPORTANT INSTRUCTIONS:
+1. Read the patient's last response carefully and respond directly to what they said
+2. Ask ONE specific follow-up question to gather more triage information
+3. If they mention severe symptoms (chest pain, can't breathe, etc), escalate immediately
+4. Keep responses concise (1-2 sentences max)
+5. Be conversational and caring, not robotic
+6. Based on symptoms gathered so far, determine triage level
+
+RESPOND WITH ONLY:
+- Next clarifying question (if gathering more info needed)
+- OR brief assessment and care recommendation (if enough info collected)
+- Keep it natural and focused on the patient's specific situation`
+
+        const aiContents = [
+          {
+            role: "user",
+            parts: [{ text: systemPrompt + "\n\nPatient's latest response: " + userAnswer }]
+          }
+        ]
+
+        console.log("🤖 Generating AI response with context...")
+        const nextQuestion = await generateText(aiContents)
+        
+        if (nextQuestion && nextQuestion.trim()) {
+          console.log("✅ AI generated:", nextQuestion.slice(0, 100) + "...")
+          
+          // Store AI response in history
+          session.conversationHistory.push({
+            role: "assistant",
+            parts: [{ text: nextQuestion }]
+          })
+          
+          responseObject.nextQuestion = nextQuestion
+          responseObject.questionType = "ai_generated"
+          responseObject.aiGenerated = true
+          res.json(responseObject)
+        } else {
+          console.warn("⚠️ AI returned empty response")
+          const fallback = "Can you tell me more about when these symptoms started and how severe they are on a scale of 1-10?"
+          session.conversationHistory.push({
+            role: "assistant",
+            parts: [{ text: fallback }]
+          })
+          responseObject.nextQuestion = fallback
+          responseObject.questionType = "fallback"
+          res.json(responseObject)
+        }
+      } catch (error) {
+        console.error("❌ AI generation error:", error.message)
+        const fallback = "I'm having trouble connecting to my reasoning. Can you tell me more about your symptoms?"
+        session.conversationHistory.push({
+          role: "assistant",
+          parts: [{ text: fallback }]
+        })
+        responseObject.nextQuestion = fallback
+        responseObject.questionType = "error_fallback"
+        responseObject.error = error.message
+        res.status(500).json(responseObject)
+      }
     }
-    
-    res.json(responseObject)
   } catch (error) {
     console.error("Error processing answer:", error)
     res.status(500).json({ success: false, error: "Failed to process answer", message: error.message })
