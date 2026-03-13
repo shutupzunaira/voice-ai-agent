@@ -703,21 +703,39 @@ app.post("/api/triage/start", (req, res) => {
 
 /* ── First triage question (consent + emergency screening) ── */
 app.get("/api/triage/initial-question", (req, res) => {
-  const { sessionId } = req.query
+  const { sessionId, mode = "general" } = req.query
   const session = getSession(sessionId, res)
   if (!session) return
-  
+
   try {
-    const question = "Are you calling about a life-threatening emergency right now? Please answer yes or no."
+    let question
+    let questionType
+
+    switch ((mode || "").toString().toLowerCase()) {
+      case "urgent":
+        questionType = "urgent_screen"
+        question = "Are you currently experiencing any of these severe symptoms: chest pain, trouble breathing, severe bleeding, or sudden confusion? Please describe what you are feeling right now."
+        break
+      case "mental":
+        questionType = "mental_screen"
+        question = "How have you been feeling emotionally recently? Are you experiencing thoughts of self-harm, hopelessness, or extreme anxiety?"
+        break
+      case "general":
+      default:
+        questionType = "general_screen"
+        question = "What is the main reason you are seeking medical evaluation today? Please describe your symptoms or concerns."
+        break
+    }
+
     session.conversationHistory.push({
       role: "assistant",
       parts: [{ text: question }]
     })
-    
+
     res.json({
       success: true,
       question,
-      questionType: "emergency_screen",
+      questionType,
       sessionId,
       timestamp: new Date().toISOString()
     })
@@ -760,6 +778,22 @@ app.post("/api/triage/answer", async (req, res) => {
         timestamp: new Date().toISOString()
       })
       return
+    }
+
+    // Quick check for irrelevant / off-topic questions before tool execution
+    const irrelevantPatterns = /\b(what\s+time\s+is\s+it|what\s+is\s+the\s+time|what\s+day\s+is\s+it|what\s+is\s+your\s+name|tell\s+me\s+a\s+joke|how\s+are\s+you|what\s+is\s+the\s+weather|who\s+are\s+you)\b/i
+    if (irrelevantPatterns.test(userAnswer)) {
+      const responseText = "Question irrelevant. Please provide details about your symptoms or the reason for seeking care."
+      session.conversationHistory.push({ role: "assistant", parts: [{ text: responseText }] })
+      return res.json({
+        success: true,
+        answer: userAnswer,
+        sessionId,
+        toolExecuted: false,
+        nextQuestion: responseText,
+        questionType: "irrelevant",
+        timestamp: new Date().toISOString()
+      })
     }
 
     // ╔═══════════════════════════════════════════╗
@@ -819,7 +853,7 @@ app.post("/api/triage/answer", async (req, res) => {
     }
     
     // 4. DETECT: Slot Availability Request
-    const availabilityPatterns = /available|when.*can\s*i|what times?|next.*opening/i
+    const availabilityPatterns = /\b(available|slots?|appointments?)\b|\bwhen\s+can\s+i\b|\bwhat\s+times\b.*\b(available|open|appointment)\b|\bnext\s+.*\b(opening|available)\b/i
     if (availabilityPatterns.test(userAnswer) && !toolExecuted) {
       const nextDate = getNextBusinessDay()
       toolName = "check_slots"
@@ -886,10 +920,12 @@ IMPORTANT INSTRUCTIONS:
 4. Keep responses concise (1-2 sentences max)
 5. Be conversational and caring, not robotic
 6. Based on symptoms gathered so far, determine triage level
+7. If the patient's message is unrelated to their medical concern (e.g., off-topic or nonsensical), respond with: "Question irrelevant. Please provide details about your symptoms or reason for seeking care."
 
 RESPOND WITH ONLY:
 - Next clarifying question (if gathering more info needed)
 - OR brief assessment and care recommendation (if enough info collected)
+- If the question is unrelated, respond with: "Question irrelevant. Please provide details about your symptoms or reason for seeking care."
 - Keep it natural and focused on the patient's specific situation`
 
         const aiContents = [
@@ -928,7 +964,7 @@ RESPOND WITH ONLY:
         }
       } catch (error) {
         console.error("❌ AI generation error:", error.message)
-        const fallback = "I'm having trouble connecting to my reasoning. Can you tell me more about your symptoms?"
+        const fallback = "I'm having trouble connecting to my reasoning. Please describe your symptoms again or try rephrasing your question."
         session.conversationHistory.push({
           role: "assistant",
           parts: [{ text: fallback }]
@@ -936,12 +972,23 @@ RESPOND WITH ONLY:
         responseObject.nextQuestion = fallback
         responseObject.questionType = "error_fallback"
         responseObject.error = error.message
-        res.status(500).json(responseObject)
+        // Return success so the frontend can display the message without showing a network error
+        res.json(responseObject)
       }
     }
   } catch (error) {
     console.error("Error processing answer:", error)
-    res.status(500).json({ success: false, error: "Failed to process answer", message: error.message })
+    const fallback = "Something went wrong on our side. Please try again in a moment."
+    res.json({
+      success: true,
+      answer: "",
+      sessionId,
+      toolExecuted: false,
+      nextQuestion: fallback,
+      questionType: "error_fallback",
+      error: error.message,
+      timestamp: new Date().toISOString()
+    })
   }
 })
 

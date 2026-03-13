@@ -5,9 +5,10 @@ import TriagePage from "./pages/TriagePage"
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home") // home or triage
+  const [triageMode, setTriageMode] = useState("general")
 
-  const handleStartInterview = (topicId) => {
-    // For now, just start triage regardless of topic
+  const handleStartInterview = (mode) => {
+    setTriageMode(mode)
     setCurrentPage("triage")
   }
 
@@ -22,6 +23,7 @@ function App() {
       )}
       {currentPage === "triage" && (
         <TriagePage
+          triageMode={triageMode}
           onEndSession={handleBackToHome}
           onBack={handleBackToHome}
         />

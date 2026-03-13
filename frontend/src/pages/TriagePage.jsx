@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import "../styles/TriagePage.css"
 
-function TriagePage({ onEndSession, onBack }) {
+function TriagePage({ triageMode = "general", onEndSession, onBack }) {
   const [sessionId, setSessionId] = useState(null)
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(false)
@@ -149,7 +149,7 @@ function TriagePage({ onEndSession, onBack }) {
         await speak(data.message)
 
         // Fetch initial triage question
-        const qRes = await fetch(`/api/triage/initial-question?sessionId=${data.sessionId}`)
+        const qRes = await fetch(`/api/triage/initial-question?sessionId=${data.sessionId}&mode=${encodeURIComponent(triageMode)}`)
         const qData = await qRes.json()
         if (qData.success) {
           addMessage("assistant", qData.question)
@@ -254,7 +254,12 @@ function TriagePage({ onEndSession, onBack }) {
         </button>
         <div className="header-content">
           <h1>🏥 CliniQ Medical Triage</h1>
-          <p>Professional Health Evaluation & Care Routing</p>
+          <p>
+            Professional Health Evaluation & Care Routing
+            {triageMode === "urgent" && " — Urgent Care"}
+            {triageMode === "mental" && " — Mental Health"}
+            {triageMode === "general" && " — General"}
+          </p>
         </div>
         <div className="status-bar">
           <span className={`triage-level triage-level-${triageLevel.toLowerCase()}`}>
