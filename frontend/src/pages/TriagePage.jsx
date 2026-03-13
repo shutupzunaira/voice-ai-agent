@@ -190,9 +190,14 @@ function TriagePage({ onEndSession, onBack }) {
           // Show emergency action needed
           setTriageLevel("EMERGENCY")
         } else {
-          // Continue with triage
-          addMessage("assistant", "Thank you for that information. Let me ask another question...")
-          await speak("Thank you. Let me ask another question...")
+          // Continue with triage: prefer backend-provided confirmation or follow‑up
+          let assistantText =
+            data.confirmationMessage ||
+            data.nextQuestion ||
+            "Thank you for that information. Can you tell me how long this has been going on and how severe it feels on a scale from 1 to 10?"
+
+          addMessage("assistant", assistantText)
+          await speak(assistantText)
         }
       }
     } catch (error) {
