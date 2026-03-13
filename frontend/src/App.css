@@ -39,56 +39,61 @@ html, body, #root {
 
 .landing-container {
   width: 100%;
-  max-width: min(1000px, 90vw);
+  max-width: none;
+  min-height: 100vh;
   background: white;
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border-radius: 0;
+  box-shadow: none;
   overflow: hidden;
+  margin: 0;
 }
 
 /* Emergency Header Banner */
 .emergency-header {
   background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
   color: white;
-  padding: clamp(20px, 4vw, 28px) clamp(16px, 3vw, 24px);
+  padding: clamp(12px, 2.5vw, 18px) clamp(12px, 2.5vw, 18px);
   text-align: center;
   border-bottom: 4px solid #922b21;
 }
 
 .emergency-badge {
-  font-size: 14px;
+  font-size: clamp(12px, 1.6vw, 14px);
   font-weight: 700;
   letter-spacing: 1.5px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   text-transform: uppercase;
 }
 
 .emergency-numbers {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
 }
 
 .emergency-item {
   display: flex;
   flex-direction: column;
   background: rgba(255, 255, 255, 0.15);
-  padding: 12px 16px;
+  padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   font-size: 13px;
+  flex: 1 1 170px;
+  max-width: 240px;
 }
 
 .emergency-label {
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: 12px;
   opacity: 0.95;
 }
 
 .emergency-number {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.5px;
 }
@@ -249,10 +254,6 @@ html, body, #root {
 
 /* Large Laptop Screens (1440px+) */
 @media (min-width: 1440px) {
-  .landing-container {
-    max-width: 1100px;
-  }
-  
   .landing-options {
     grid-template-columns: repeat(2, 1fr);
     gap: 28px;
@@ -285,8 +286,8 @@ html, body, #root {
     font-size: clamp(26px, 5vw, 38px);
   }
 
-  .emergency-numbers {
-    grid-template-columns: repeat(2, 1fr);
+  .emergency-item {
+    flex-basis: 220px;
   }
 
   .landing-features {
@@ -309,8 +310,9 @@ html, body, #root {
     font-size: 32px;
   }
 
-  .emergency-numbers {
-    grid-template-columns: 1fr;
+  .emergency-item {
+    flex-basis: 100%;
+    max-width: 520px;
   }
 
   .landing-features {
@@ -324,10 +326,6 @@ html, body, #root {
 }
 
 @media (max-width: 480px) {
-  .landing-container {
-    border-radius: 0;
-  }
-
   .landing-content {
     padding: 20px 16px;
   }
