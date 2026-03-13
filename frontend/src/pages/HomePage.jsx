@@ -11,24 +11,24 @@ function HomePage({ onStartInterview }) {
         <div className="emergency-badge">🚨 EMERGENCY NUMBERS</div>
         <div className="emergency-numbers">
           <div className="emergency-item">
-            <span className="emergency-label">Life-Threatening:</span>
-            <span className="emergency-number">911</span>
+            <span className="emergency-label">National Emergency (Police/Fire/Ambulance):</span>
+            <span className="emergency-number">112</span>
           </div>
           <div className="emergency-item">
-            <span className="emergency-label">Poison Control:</span>
-            <span className="emergency-number">1-800-222-1222</span>
+            <span className="emergency-label">Police:</span>
+            <span className="emergency-number">100</span>
           </div>
           <div className="emergency-item">
-            <span className="emergency-label">Mental Health Crisis:</span>
-            <span className="emergency-number">988</span>
+            <span className="emergency-label">Fire:</span>
+            <span className="emergency-number">101</span>
           </div>
           <div className="emergency-item">
-            <span className="emergency-label">Suicide Prevention:</span>
-            <span className="emergency-number">1-800-273-8255</span>
+            <span className="emergency-label">Ambulance:</span>
+            <span className="emergency-number">102</span>
           </div>
           <div className="emergency-item">
-            <span className="emergency-label">Domestic Violence:</span>
-            <span className="emergency-number">1-800-799-7233</span>
+            <span className="emergency-label">Mental Health / Suicide Helpline:</span>
+            <span className="emergency-number">14416</span>
           </div>
         </div>
       </div>

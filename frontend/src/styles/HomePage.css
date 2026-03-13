@@ -363,34 +363,86 @@
   }
 }
 
-.home-features {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 2rem;
-  max-width: 600px;
-  margin: 2rem auto;
+.start-button {
+  background: linear-gradient(135deg, #2c3e50 0%, #1a1a1a 100%);
   color: white;
-  backdrop-filter: blur(10px);
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.start-button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(44, 62, 80, 0.4);
+  background: linear-gradient(135deg, #1a1a1a 0%, #000000 100%);
+}
+
+.start-button:active {
+  transform: scale(0.98);
+}
+
+.home-features {
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 14px;
+  padding: 1.75rem;
+  max-width: 860px;
+  margin: 0 auto 2rem;
+  color: #1a1a1a;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 }
 
 .home-features h2 {
-  margin-top: 0;
-  font-size: clamp(1.5rem, 3vw, 2rem);
   text-align: center;
+  margin-bottom: 1rem;
+  color: #2c3e50;
 }
 
 .home-features ul {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1rem;
 }
 
 .home-features li {
-  font-size: clamp(0.95rem, 2vw, 1.1rem);
-  padding: 0.5rem;
+  padding: 0.9rem 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  border-left: 5px solid #2c3e50;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: #1a1a1a;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.06);
+}
+
+.assessment-notice {
+  text-align: center;
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.critical-warning {
+  color: #c0392b !important;
+  font-weight: 600 !important;
+  background: #ffebee;
+  padding: 12px;
+  border-radius: 6px;
+  margin: 12px 0 !important;
+  border-left: 4px solid #c0392b;
+}
+
+.disclaimer {
+  font-size: 12px;
+  color: #999;
+  margin-top: 1rem;
 }
 
 @keyframes slideDown {
@@ -404,14 +456,23 @@
   }
 }
 
+/* Responsive */
 @media (max-width: 768px) {
-  .home-page {
-    padding: 1.5rem 0.5rem;
+  .assessment-options {
+    grid-template-columns: 1fr;
   }
 
-  .topics-grid {
+  .home-features ul {
     grid-template-columns: 1fr;
-    gap: 1rem;
+  }
+
+  .emergency-numbers {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .home-page {
+    padding: 1.5rem 0.5rem;
   }
 
   .home-features {
