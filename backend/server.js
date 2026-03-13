@@ -58,20 +58,55 @@ function getRandomAvailableDoctor() {
 }
 
 /* ─────────────── Medical Tool Functions (Real Execution) ─────────────── */
+function generateDefaultSlotsForDate(date) {
+  // Generate default slots based on clinic hours (30-minute increments)
+  const dt = new Date(date)
+  const dayOfWeek = dt.getDay() // 0 = Sunday, 1 = Monday, ...
+
+  // If clinic closed on Sunday
+  if (dayOfWeek === 0) {
+    return []
+  }
+
+  // Default working hours (these could be pulled from Medical_DB.clinicHours if parsed)
+  const morningStart = 9
+  const morningEnd = 12
+  const afternoonStart = 13
+  const afternoonEnd = 17
+
+  const slots = []
+  const addSlots = (startHour, endHour) => {
+    for (let hour = startHour; hour < endHour; hour++) {
+      slots.push(`${hour.toString().padStart(2, '0')}:00`)
+      slots.push(`${hour.toString().padStart(2, '0')}:30`)
+    }
+  }
+
+  addSlots(morningStart, morningEnd)
+  addSlots(afternoonStart, afternoonEnd)
+  return slots
+}
+
 function checkAvailableSlots(date) {
-  const slots = Medical_DB.availableSlots[date]
-  if (!slots) {
-    return { success: false, error: `No appointments available for ${date}` }
+  // Ensure date string is normalized
+  const normalizedDate = date
+
+  // Initialize slots for the date if it doesn’t already exist
+  if (!Medical_DB.availableSlots[normalizedDate]) {
+    Medical_DB.availableSlots[normalizedDate] = generateDefaultSlotsForDate(normalizedDate)
   }
-  if (slots.length === 0) {
-    return { success: false, error: `All slots are full for ${date}. The clinic is closed on Sundays.` }
+
+  const slots = Medical_DB.availableSlots[normalizedDate]
+  if (!slots || slots.length === 0) {
+    return { success: false, error: `No appointments available for ${normalizedDate}` }
   }
-  return { success: true, slots, date }
+
+  return { success: true, slots, date: normalizedDate }
 }
 
 function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID = "dr_sharma") {
-  // Validate date/time
-  const slots = Medical_DB.availableSlots[date]
+  // Ensure we have slots for the given date (generates defaults if missing)
+  const slots = checkAvailableSlots(date).slots
   if (!slots || !slots.includes(time)) {
     return { success: false, error: `Time slot ${time} is not available on ${date}` }
   }
@@ -1101,6 +1136,7 @@ app.post("/api/triage/answer", async (req, res) => {
       // Try to extract date and time from user input
       const extractedDate = extractDate(userAnswer)
       const extractedTime = extractTime(userAnswer)
+      console.log("🗓 extractDate =>", extractedDate, "| extractTime =>", extractedTime, "| input =>", userAnswer)
 
       if (extractedDate && extractedTime) {
         // Have both date and time - book immediately
@@ -1186,12 +1222,14 @@ app.post("/api/triage/answer", async (req, res) => {
     }
 
     // 4. DETECT: Slot Availability Request (Enhanced)
-    const availabilityPatterns = /\b(available|slots?|appointments?|open|free)\b.*\b(when|what|next)|\bwhat\s+times\b|\bwhen\s+can\s+i\b|\bnext\s+.*\b(opening|available|appointment)|\bshow\s+me\s+.*\btimes\b/i
+    const availabilityPatterns = /\b(availability|available|slots?|open|free|check)\b/i
     if (availabilityPatterns.test(userAnswer) && !toolExecuted) {
       console.log("📅 Detected availability check request")
 
       const extractedDate = extractDate(userAnswer)
       const targetDate = extractedDate || getNextBusinessDay()
+
+      console.log("🗓 availability parsing:", { extractedDate, targetDate, userAnswer })
 
       toolName = "check_slots"
       toolResult = checkAvailableSlots(targetDate)
@@ -1409,9 +1447,8 @@ function extractDate(text) {
 
   // Direct date formats
   const datePatterns = [
-    /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,  // MM/DD/YYYY
-    /(\d{1,2})-(\d{1,2})-(\d{2,4})/,    // MM-DD-YYYY
-    /(\d{4})-(\d{2})-(\d{2})/           // YYYY-MM-DD
+    /(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{2,4})/,  // MM/DD/YYYY or DD-MM-YYYY (with optional spaces)
+    /(\d{4})\s*[\/-]\s*(\d{2})\s*[\/-]\s*(\d{2})/           // YYYY-MM-DD (with optional spaces)
   ]
 
   for (const pattern of datePatterns) {
@@ -1419,7 +1456,8 @@ function extractDate(text) {
     if (match) {
       let year, month, day
 
-      if (pattern.source.includes('YYYY-MM-DD')) {
+      // Determine whether the first capture group is a 4-digit year (YYYY-MM-DD) or month (MM-DD-YYYY)
+      if (match[1].length === 4) {
         // YYYY-MM-DD format
         year = parseInt(match[1])
         month = parseInt(match[2]) - 1 // JS months are 0-based
@@ -1434,56 +1472,58 @@ function extractDate(text) {
 
       const date = new Date(year, month, day)
       if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
-        return date.toISOString().split('T')[0]
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
       }
     }
   }
 
   // Relative dates
   const today = new Date()
+  const formatLocalDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
   if (lowerText.includes('tomorrow')) {
     const tomorrow = new Date(today)
     tomorrow.setDate(today.getDate() + 1)
-    return tomorrow.toISOString().split('T')[0]
+    return formatLocalDate(tomorrow)
   }
 
   if (lowerText.includes('today')) {
-    return today.toISOString().split('T')[0]
+    return formatLocalDate(today)
   }
 
   if (lowerText.includes('next monday') || lowerText.includes('monday')) {
     const nextMonday = new Date(today)
     const daysUntilMonday = (1 - today.getDay() + 7) % 7 || 7
     nextMonday.setDate(today.getDate() + daysUntilMonday)
-    return nextMonday.toISOString().split('T')[0]
+    return formatLocalDate(nextMonday)
   }
 
   if (lowerText.includes('next tuesday') || lowerText.includes('tuesday')) {
     const nextTuesday = new Date(today)
     const daysUntilTuesday = (2 - today.getDay() + 7) % 7 || 7
     nextTuesday.setDate(today.getDate() + daysUntilTuesday)
-    return nextTuesday.toISOString().split('T')[0]
+    return formatLocalDate(nextTuesday)
   }
 
   if (lowerText.includes('next wednesday') || lowerText.includes('wednesday')) {
     const nextWednesday = new Date(today)
     const daysUntilWednesday = (3 - today.getDay() + 7) % 7 || 7
     nextWednesday.setDate(today.getDate() + daysUntilWednesday)
-    return nextWednesday.toISOString().split('T')[0]
+    return formatLocalDate(nextWednesday)
   }
 
   if (lowerText.includes('next thursday') || lowerText.includes('thursday')) {
     const nextThursday = new Date(today)
     const daysUntilThursday = (4 - today.getDay() + 7) % 7 || 7
     nextThursday.setDate(today.getDate() + daysUntilThursday)
-    return nextThursday.toISOString().split('T')[0]
+    return formatLocalDate(nextThursday)
   }
 
   if (lowerText.includes('next friday') || lowerText.includes('friday')) {
     const nextFriday = new Date(today)
     const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
     nextFriday.setDate(today.getDate() + daysUntilFriday)
-    return nextFriday.toISOString().split('T')[0]
+    return formatLocalDate(nextFriday)
   }
 
   // Day after tomorrow
