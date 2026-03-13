@@ -62,8 +62,8 @@ function LandingPage({ onStartTriage }) {
       <div className="landing-content">
         <div className="hospital-header">
           <div className="hospital-icon">🏥</div>
-          <h1>Virtual Clinic Medical Assessment</h1>
-          <p className="tagline">Professional Health Triage & Urgent Care Routing</p>
+          <h1>CliniQ Medical Triage</h1>
+          <p className="tagline">Emergency Assessment & Urgent Care Routing</p>
         </div>
 
         <div className="landing-options">

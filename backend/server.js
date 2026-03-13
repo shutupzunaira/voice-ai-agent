@@ -553,11 +553,11 @@ app.post("/api/voice-agent/cancel", (req, res) => {
 app.get("/api/voice-agent/clinic-info", (req, res) => {
   res.json({
     success: true,
-    clinicName: "Virtual Clinic",
+    clinicName: "CliniQ",
     clinicHours: Medical_DB.clinicHours,
     doctors: Medical_DB.doctors,
     address: "123 Medical Street, Health City, HC 12345",
-    phone: "+1-555-CLINIC-1",
+    phone: "+1-555-CLINIQ-1",
     supportedServices: ["General Practice", "Cardiology", "Pediatrics", "Orthopedics"],
     timestamp: new Date().toISOString()
   })
@@ -669,7 +669,7 @@ app.get("/api/test/appointments", (req, res) => {
   })
 })
 
-app.get("/", (req, res) => res.send("Virtual Clinic Medical Voice Agent - HIPAA Ready"))
+app.get("/", (req, res) => res.send("CliniQ - Medical Voice Agent - HIPAA Ready"))
 
 app.get("/health", (req, res) => {
   res.json({
@@ -692,7 +692,7 @@ app.post("/api/triage/start", (req, res) => {
     res.json({
       success: true,
       sessionId,
-      message: "Welcome to Virtual Clinic. I'm here to help assess your health concern and get you the right care.",
+      message: "Hey, what is your emergency?",
       timestamp: new Date().toISOString()
     })
   } catch (error) {
@@ -1390,7 +1390,7 @@ app.post("/api/voice-agent/session", (req, res) => {
     success: true,
     sessionId,
     message: "Voice agent session started. You can now speak to the clinic assistant.",
-    greeting: "Hello! Welcome to Virtual Clinic. How can I help you today?"
+    greeting: "Hey, what is your emergency?"
   })
 })
 

@@ -219,7 +219,7 @@ function TriagePage({ onEndSession, onBack }) {
           ← Back
         </button>
         <div className="header-content">
-          <h1>🏥 Virtual Clinic Medical Assessment</h1>
+          <h1>🏥 CliniQ Medical Triage</h1>
           <p>Professional Health Evaluation & Care Routing</p>
         </div>
         <div className="status-bar">
