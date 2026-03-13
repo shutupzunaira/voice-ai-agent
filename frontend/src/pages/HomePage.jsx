@@ -3,216 +3,94 @@ import { useEffect, useState } from "react"
 
 function HomePage({ onStartInterview }) {
   const [showOptions, setShowOptions] = useState(false)
-  // showTopics removed; topics display immediately when showOptions true
-  const [topics, setTopics] = useState([])
-  const [topicsLoading, setTopicsLoading] = useState(false)
-  const [topicsError, setTopicsError] = useState(null)
-  const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [rating, setRating] = useState(0)
-  const [feedbackText, setFeedbackText] = useState("")
-  const [feedbackEntries, setFeedbackEntries] = useState([])
-
-  useEffect(() => {
-    if (!showOptions) return
-
-    const loadTopics = async () => {
-      setTopicsLoading(true)
-      setTopicsError(null)
-      try {
-        const res = await fetch("/topics")
-        if (!res.ok) {
-          // attempt to read text in case of HTML error page
-          const text = await res.text()
-          throw new Error(`Failed to fetch topics (${res.status}): ${text.slice(0,100)}`)
-        }
-        const data = await res.json()
-        if (!data?.success) {
-          throw new Error(data?.message || data?.error || `HTTP error: ${res.status}`)
-        }
-        setTopics(Array.isArray(data.topics) ? data.topics : [])
-      } catch (e) {
-        let msg = e?.message || "Failed to load topics"
-        // strip HTML if accidentally returned
-        if (msg.trim().startsWith("<")) {
-          msg = "Server returned unexpected response."
-        }
-        setTopicsError(msg)
-        setTopics([])
-      } finally {
-        setTopicsLoading(false)
-      }
-    }
-
-    loadTopics()
-  }, [showOptions])
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("talkscout_feedback_entries")
-      const parsed = raw ? JSON.parse(raw) : []
-      setFeedbackEntries(Array.isArray(parsed) ? parsed : [])
-    } catch {
-      setFeedbackEntries([])
-    }
-  }, [])
-
-  const saveFeedbackEntries = (entries) => {
-    setFeedbackEntries(entries)
-    try {
-      localStorage.setItem("talkscout_feedback_entries", JSON.stringify(entries))
-    } catch {
-      // ignore
-    }
-  }
-
-  const submitFeedback = () => {
-    if (!rating) return
-    const entry = {
-      id: `${Date.now()}`,
-      rating,
-      text: feedbackText.trim(),
-      createdAt: new Date().toISOString()
-    }
-    const next = [entry, ...feedbackEntries]
-    saveFeedbackEntries(next)
-    setFeedbackText("")
-    setRating(0)
-    setFeedbackOpen(false)
-  }
 
   return (
     <div className="home-page">
+      {/* Emergency Numbers Header */}
+      <div className="emergency-header">
+        <div className="emergency-badge">🚨 EMERGENCY NUMBERS</div>
+        <div className="emergency-numbers">
+          <div className="emergency-item">
+            <span className="emergency-label">National Emergency (Police/Fire/Ambulance):</span>
+            <span className="emergency-number">112</span>
+          </div>
+          <div className="emergency-item">
+            <span className="emergency-label">Police:</span>
+            <span className="emergency-number">100</span>
+          </div>
+          <div className="emergency-item">
+            <span className="emergency-label">Fire:</span>
+            <span className="emergency-number">101</span>
+          </div>
+          <div className="emergency-item">
+            <span className="emergency-label">Ambulance:</span>
+            <span className="emergency-number">102</span>
+          </div>
+          <div className="emergency-item">
+            <span className="emergency-label">Mental Health / Suicide Helpline:</span>
+            <span className="emergency-number">14416</span>
+          </div>
+        </div>
+      </div>
+
       <div className="home-header">
-        <h1>Hello Interviewee, This is TalkScout</h1>
-        <p>Master your interview skills with AI-powered practice</p>
+        <div className="hospital-icon">🏥</div>
+        <h1>CliniQ Medical Triage</h1>
+        <p>Emergency Assessment & Urgent Care Routing</p>
       </div>
 
       <div className="home-intro">
-        <p>Start a practice interview and answer questions as you go.</p>
+        <p>Quick health evaluation to determine care urgency and next steps for your condition.</p>
       </div>
 
       {!showOptions ? (
         <>
           <div className="home-start">
             <button className="start-button" onClick={() => setShowOptions(true)}>
-              Let us start
+              Start Medical Assessment
             </button>
           </div>
 
           <div className="home-features">
-            <h2>Why TalkScout?</h2>
+            <h2>Why Choose CliniQ?</h2>
             <ul>
-              <li>Real-time AI interviewer (interactive questions)</li>
-              <li>Topic-based interview practice</li>
-              <li>Voice + text answers</li>
-              <li>Track and review your session feedback</li>
+              <li>⚡ Rapid triage assessment with AI assistance</li>
+              <li>🩺 Professional medical evaluation and routing</li>
+              <li>🎤 Voice and text input options</li>
+              <li>🔐 Confidential and secure health information handling</li>
             </ul>
           </div>
         </>
       ) : (
         <>
-          <div className="topics-grid">
-            {topicsLoading ? (
-              <p className="topic-count">Loading topics...</p>
-            ) : topicsError ? (
-              <p className="topic-count">Error: {topicsError}</p>
-            ) : topics.length === 0 ? (
-              <p className="topic-count">No topics available</p>
-            ) : (
-              topics.map((t) => (
-                <div
-                  key={t.id}
-                  className="topic-card"
-                  onClick={() => onStartInterview?.(t.id)}
-                >
-                  <h3>{t.name}</h3>
-                  <p className="topic-description">{t.description}</p>
-                  <p className="topic-count">
-                    {t.count || 0} {t.count === 1 ? "question" : "questions"}
-                  </p>
-                </div>
-              ))
-            )}
+          <div className="assessment-options">
+            <div className="assessment-card" onClick={() => onStartInterview('general')}>
+              <h3>🩺 General Health Assessment</h3>
+              <p>Evaluate general health concerns and determine appropriate care level</p>
+              <p className="assessment-count">AI-powered triage • Voice/text support</p>
+            </div>
+
+            <div className="assessment-card" onClick={() => onStartInterview('urgent')}>
+              <h3>🚨 Urgent Care Evaluation</h3>
+              <p>Assess potentially serious symptoms requiring immediate attention</p>
+              <p className="assessment-count">Emergency detection • Priority routing</p>
+            </div>
+
+            <div className="assessment-card" onClick={() => onStartInterview('mental')}>
+              <h3>🧠 Mental Health Screening</h3>
+              <p>Initial assessment for mental health concerns and crisis support</p>
+              <p className="assessment-count">Crisis detection • Support resources</p>
+            </div>
           </div>
 
-          <div className="feedback-section">
-            <div className="feedback-header-row">
-              <h2>Give Feedback</h2>
-              <button
-                className="start-button"
-                onClick={() => setFeedbackOpen((v) => !v)}
-              >
-                Give Feedback
-              </button>
-            </div>
-
-            {feedbackOpen && (
-              <div className="feedback-portal">
-                <p className="topic-count" style={{ marginTop: "0" }}>
-                  Rating (out of 5)
-                </p>
-                <div className="star-row" role="radiogroup" aria-label="Rating">
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className={`star-button ${n <= rating ? "active" : ""}`}
-                      onClick={() => setRating(n)}
-                      aria-label={`${n} star${n === 1 ? "" : "s"}`}
-                    >
-                      ★
-                    </button>
-                  ))}
-                </div>
-
-                <textarea
-                  className="feedback-textarea"
-                  value={feedbackText}
-                  onChange={(e) => setFeedbackText(e.target.value)}
-                  placeholder="Optional: write your feedback here..."
-                  rows={3}
-                />
-
-                <div className="feedback-actions">
-                  <button
-                    className="start-button"
-                    onClick={submitFeedback}
-                    disabled={!rating}
-                  >
-                    Submit
-                  </button>
-                  <button
-                    className="start-button secondary"
-                    onClick={() => setFeedbackOpen(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="feedback-list">
-              {feedbackEntries.length === 0 ? (
-                <p className="topic-count" style={{ textAlign: "center" }}>
-                  No feedback submitted yet.
-                </p>
-              ) : (
-                feedbackEntries.map((e) => (
-                  <div key={e.id} className="feedback-item">
-                    <div className="feedback-item-top">
-                      <div className="feedback-stars" aria-label={`Rated ${e.rating} out of 5`}>
-                        {"★".repeat(e.rating)}
-                        {"☆".repeat(5 - e.rating)}
-                      </div>
-                      <div className="feedback-date">
-                        {new Date(e.createdAt).toLocaleString()}
-                      </div>
-                    </div>
-                    {e.text ? <div className="feedback-item-text">{e.text}</div> : null}
-                  </div>
-                ))
-              )}
-            </div>
+          <div className="assessment-notice">
+            <p className="critical-warning">
+              ⚠️ For life-threatening emergencies, call 911 immediately
+            </p>
+            <p className="disclaimer">
+              This assessment tool helps route patients to appropriate care levels.
+              All health information is handled confidentially and securely.
+            </p>
           </div>
         </>
       )}
