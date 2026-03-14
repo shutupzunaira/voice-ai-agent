@@ -17,7 +17,8 @@ function DoctorDashboard({ doctorName, onLogout }) {
       const response = await fetch("/api/appointments/all")
       if (response.ok) {
         const data = await response.json()
-        setAppointments(Array.isArray(data) ? data : [])
+        // The API returns { success, appointments, summary }
+        setAppointments(Array.isArray(data?.appointments) ? data.appointments : [])
       }
     } catch (error) {
       console.error("Failed to fetch appointments:", error)
@@ -27,27 +28,32 @@ function DoctorDashboard({ doctorName, onLogout }) {
   }
 
   const filteredAppointments = appointments.filter((apt) => {
+    const patientName = apt.patientName || apt.name || ""
+    const phone = apt.phoneNumber || apt.phone || ""
+    const status = apt.status || "pending"
+
     const matchesSearch =
-      apt.patientName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      apt.phoneNumber?.includes(searchTerm)
+      patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      phone.includes(searchTerm)
 
     if (filterStatus === "all") return matchesSearch
-    if (filterStatus === "pending") return matchesSearch && apt.status !== "completed"
-    if (filterStatus === "completed") return matchesSearch && apt.status === "completed"
+    if (filterStatus === "pending") return matchesSearch && status !== "completed"
+    if (filterStatus === "completed") return matchesSearch && status === "completed"
     return matchesSearch
   })
 
   const stats = {
     total: appointments.length,
-    pending: appointments.filter((a) => a.status !== "completed").length,
-    completed: appointments.filter((a) => a.status === "completed").length,
+    pending: appointments.filter((a) => (a.status || "pending") !== "completed").length,
+    completed: appointments.filter((a) => (a.status || "pending") === "completed").length,
   }
 
   const handleMarkComplete = (appointmentId) => {
     setAppointments(
-      appointments.map((apt) =>
-        apt.id === appointmentId ? { ...apt, status: "completed" } : apt
-      )
+      appointments.map((apt) => {
+        const id = apt.appointmentID || apt.id || ""
+        return id === appointmentId ? { ...apt, status: "completed" } : apt
+      })
     )
   }
 
@@ -141,39 +147,50 @@ function DoctorDashboard({ doctorName, onLogout }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredAppointments.map((apt) => (
-                  <tr key={apt.id} className={`status-${apt.status || "pending"}`}>
-                    <td className="patient-name">
-                      <strong>{apt.patientName || "N/A"}</strong>
-                    </td>
-                    <td>{apt.phoneNumber || "N/A"}</td>
-                    <td>{apt.patientAge || "N/A"}</td>
-                    <td>{apt.date || "N/A"}</td>
-                    <td>
-                      <span className="time-badge">{apt.time || "N/A"}</span>
-                    </td>
-                    <td>{apt.reason || "General Consultation"}</td>
-                    <td>
-                      <span className={`status-badge status-${apt.status || "pending"}`}>
-                        {apt.status === "completed" ? "✓ Completed" : "⏳ Pending"}
-                      </span>
-                    </td>
-                    <td className="actions">
-                      {apt.status !== "completed" && (
-                        <button
-                          className="action-btn complete-btn"
-                          onClick={() => handleMarkComplete(apt.id)}
-                          title="Mark as completed"
-                        >
-                          ✓ Complete
+                {filteredAppointments.map((apt, idx) => {
+                  const appointmentId = apt.appointmentID || apt.id || String(idx)
+                  const status = apt.status || "pending"
+                  const patientName = apt.patientName || apt.name || "N/A"
+                  const phone = apt.phoneNumber || apt.phone || "N/A"
+                  const age = apt.age || apt.patientAge || "N/A"
+                  const date = apt.date || apt.preferredDate || "N/A"
+                  const time = apt.time || apt.preferredTime || "N/A"
+                  const reason = apt.reason || apt.reasonForVisit || "General Consultation"
+
+                  return (
+                    <tr key={appointmentId} className={`status-${status}`}>
+                      <td className="patient-name">
+                        <strong>{patientName}</strong>
+                      </td>
+                      <td>{phone}</td>
+                      <td>{age}</td>
+                      <td>{date}</td>
+                      <td>
+                        <span className="time-badge">{time}</span>
+                      </td>
+                      <td>{reason}</td>
+                      <td>
+                        <span className={`status-badge status-${status}`}>
+                          {status === "completed" ? "✓ Completed" : "⏳ Pending"}
+                        </span>
+                      </td>
+                      <td className="actions">
+                        {status !== "completed" && (
+                          <button
+                            className="action-btn complete-btn"
+                            onClick={() => handleMarkComplete(appointmentId)}
+                            title="Mark as completed"
+                          >
+                            ✓ Complete
+                          </button>
+                        )}
+                        <button className="action-btn view-btn" title="View details">
+                          👁️ View
                         </button>
-                      )}
-                      <button className="action-btn view-btn" title="View details">
-                        👁️ View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
