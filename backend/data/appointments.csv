@@ -1,0 +1,15 @@
+id,userId,patientName,phoneNumber,email,doctorSpecialization,preferredDate,preferredTime,reasonForVisit,status,bookingMethod,createdAt,updatedAt
+apt_1773444034025,APT_1773444034021,Rajesh Kumar,9876543210,N/A,General Practice,2026-03-20,14:00,Fever and cough,confirmed,ai_voice,2026-03-13T23:20:34.021Z,2026-03-13T23:20:34.021Z
+apt_1773444035190,patient_9876543210,Rajesh Kumar,9876543210,,General Practice,2026-03-20,14:00,Fever and cough,confirmed,voice_agent,2026-03-13T23:20:35.190Z,2026-03-13T23:20:35.190Z
+apt_1773444130739,APT_1773444130736,Priya Singh,9876543211,N/A,General Practice,2026-03-21,10:00,Headache and migraine,confirmed,ai_voice,2026-03-13T23:22:10.736Z,2026-03-13T23:22:10.736Z
+apt_1773444131916,patient_9876543211,Priya Singh,9876543211,,General Practice,2026-03-21,10:00,Headache and migraine,confirmed,voice_agent,2026-03-13T23:22:11.916Z,2026-03-13T23:22:11.916Z
+apt_1773444356462,APT_1773444356453,abc def,1234567890,N/A,General Practice,2026-11-21,09:30,General appointment,confirmed,ai_voice,2026-03-13T23:25:56.453Z,2026-03-13T23:25:56.453Z
+apt_1773444357866,patient_1234567890,abc def,1234567890,,General Practice,2026-11-21,09:30,General appointment,confirmed,form,2026-03-13T23:25:57.865Z,2026-03-13T23:25:57.865Z
+apt_1773444445027,APT_1773444445024,syeda,8976543210,N/A,General Practice,2026-03-15,13:00,General appointment,confirmed,ai_voice,2026-03-13T23:27:25.024Z,2026-03-13T23:27:25.024Z
+apt_1773444445891,patient_8976543210,syeda,8976543210,,General Practice,2026-03-15,13:00,General appointment,confirmed,form,2026-03-13T23:27:25.890Z,2026-03-13T23:27:25.890Z
+apt_1773446566293,APT_1773446566286,abc def,8976543210,N/A,General Practice,2026-03-16,15:30,General appointment,confirmed,ai_voice,2026-03-14T00:02:46.287Z,2026-03-14T00:02:46.287Z
+apt_1773446567127,patient_8976543210,abc def,8976543210,,General Practice,2026-03-16,15:30,General appointment,confirmed,form,2026-03-14T00:02:47.126Z,2026-03-14T00:02:47.126Z
+apt_1773467773371,APT_1773467773367,syeda zunaira,1234567890,N/A,General Practice,2026-03-14,10:00,General appointment,confirmed,ai_voice,2026-03-14T05:56:13.367Z,2026-03-14T05:56:13.367Z
+apt_1773467774187,patient_1234567890,syeda zunaira,1234567890,,General Practice,2026-03-14,10:00,General appointment,confirmed,form,2026-03-14T05:56:14.186Z,2026-03-14T05:56:14.186Z
+apt_1773472394107,APT_1773472394104,syeda zunaira,7209637695,N/A,General Practice,2026-03-16,09:30,General appointment,confirmed,ai_voice,2026-03-14T07:13:14.105Z,2026-03-14T07:13:14.105Z
+apt_1773472395203,patient_7209637695,syeda zunaira,7209637695,,General Practice,2026-03-16,09:30,General appointment,confirmed,form,2026-03-14T07:13:15.202Z,2026-03-14T07:13:15.202Z

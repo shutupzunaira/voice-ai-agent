@@ -5,16 +5,14 @@ function BookingPage({ onBack }) {
   const [formData, setFormData] = useState({
     patientName: "",
     phoneNumber: "",
-    email: "",
+    age: "",
     date: "",
     time: "",
-    reason: "",
-    doctorId: "",
-    visitType: "in_person"
   })
   const [availableSlots, setAvailableSlots] = useState([])
   const [doctors, setDoctors] = useState([])
   const [clinicHours, setClinicHours] = useState({})
+  const [appointments, setAppointments] = useState([])
   const [loading, setLoading] = useState(false)
   const [bookingStatus, setBookingStatus] = useState(null)
   const [errors, setErrors] = useState({})
@@ -22,6 +20,7 @@ function BookingPage({ onBack }) {
   // Load doctors on component mount
   useEffect(() => {
     loadDoctors()
+    loadAppointments()
   }, [])
 
   // Load available slots when date changes
@@ -41,6 +40,18 @@ function BookingPage({ onBack }) {
       }
     } catch (error) {
       console.error('Error loading doctors:', error)
+    }
+  }
+
+  const loadAppointments = async () => {
+    try {
+      const response = await fetch('/api/appointments/all')
+      const data = await response.json()
+      if (data.success) {
+        setAppointments(data.appointments || [])
+      }
+    } catch (error) {
+      console.error('Error loading appointments:', error)
     }
   }
 
@@ -81,14 +92,9 @@ function BookingPage({ onBack }) {
 
     if (!formData.patientName.trim()) newErrors.patientName = "Patient name is required"
     if (!formData.phoneNumber.trim()) newErrors.phoneNumber = "Phone number is required"
+    if (!formData.age.trim()) newErrors.age = "Age is required"
     if (!formData.date) newErrors.date = "Appointment date is required"
     if (!formData.time) newErrors.time = "Appointment time is required"
-    if (!formData.reason.trim()) newErrors.reason = "Reason for visit is required"
-
-    // Email validation (optional field)
-    if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = "Please enter a valid email address"
-    }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -105,12 +111,20 @@ function BookingPage({ onBack }) {
     setBookingStatus(null)
 
     try {
+      const payload = {
+        patientName: formData.patientName,
+        phoneNumber: formData.phoneNumber,
+        age: formData.age,
+        date: formData.date,
+        time: formData.time
+      }
+
       const response = await fetch('/api/patient/book-appointment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       })
 
       const data = await response.json()
@@ -126,14 +140,13 @@ function BookingPage({ onBack }) {
         setFormData({
           patientName: "",
           phoneNumber: "",
-          email: "",
+          age: "",
           date: "",
-          time: "",
-          reason: "",
-          doctorId: "",
-          visitType: "in_person"
+          time: ""
         })
         setAvailableSlots([])
+        // Refresh appointments list so new booking appears under Clinic Hours
+        loadAppointments()
       } else {
         setBookingStatus({
           type: 'error',
@@ -199,17 +212,17 @@ function BookingPage({ onBack }) {
             </div>
 
             <div className="form-group">
-              <label htmlFor="email">Email (Optional)</label>
+              <label htmlFor="age">Age *</label>
               <input
-                type="email"
-                id="email"
-                name="email"
-                value={formData.email}
+                type="number"
+                id="age"
+                name="age"
+                value={formData.age}
                 onChange={handleInputChange}
-                className={errors.email ? 'error' : ''}
-                placeholder="your.email@example.com"
+                className={errors.age ? 'error' : ''}
+                placeholder="Enter age"
               />
-              {errors.email && <span className="error-message">{errors.email}</span>}
+              {errors.age && <span className="error-message">{errors.age}</span>}
             </div>
           </div>
 
@@ -254,49 +267,8 @@ function BookingPage({ onBack }) {
             </div>
 
             <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="doctorId">Preferred Doctor</label>
-                <select
-                  id="doctorId"
-                  name="doctorId"
-                  value={formData.doctorId}
-                  onChange={handleInputChange}
-                >
-                  <option value="">Any available doctor</option>
-                  {doctors.filter(doc => doc.available).map(doctor => (
-                    <option key={doctor.id} value={doctor.id}>
-                      {doctor.name} - {doctor.specialty}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="visitType">Visit Type</label>
-                <select
-                  id="visitType"
-                  name="visitType"
-                  value={formData.visitType}
-                  onChange={handleInputChange}
-                >
-                  <option value="in_person">In-Person Visit</option>
-                  <option value="telemedicine">Telemedicine</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="reason">Reason for Visit *</label>
-              <textarea
-                id="reason"
-                name="reason"
-                value={formData.reason}
-                onChange={handleInputChange}
-                className={errors.reason ? 'error' : ''}
-                placeholder="Please describe your symptoms or reason for the appointment"
-                rows="4"
-              />
-              {errors.reason && <span className="error-message">{errors.reason}</span>}
+              {/* Doctor and visit type have been intentionally simplified away
+                  to keep booking focused on essential details only. */}
             </div>
           </div>
 
@@ -320,9 +292,10 @@ function BookingPage({ onBack }) {
                 <h4>Appointment Details</h4>
                 <div className="detail-grid">
                   <div><strong>Appointment ID:</strong> {bookingStatus.appointment.id}</div>
+                  {bookingStatus.appointment.patientId && (
+                    <div><strong>Patient ID:</strong> {bookingStatus.appointment.patientId}</div>
+                  )}
                   <div><strong>Date & Time:</strong> {bookingStatus.appointment.date} at {bookingStatus.appointment.time}</div>
-                  <div><strong>Doctor:</strong> {bookingStatus.appointment.doctor.name} ({bookingStatus.appointment.doctor.specialty})</div>
-                  <div><strong>Visit Type:</strong> {bookingStatus.appointment.visitType === 'in_person' ? 'In-Person' : 'Telemedicine'}</div>
                   <div><strong>Status:</strong> {bookingStatus.appointment.status}</div>
                 </div>
                 <div className="confirmation-message">
@@ -350,6 +323,46 @@ function BookingPage({ onBack }) {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="booked-appointments">
+          <h3>📅 Today's Booked Appointments</h3>
+          {appointments && appointments.length > 0 ? (
+            <div className="appointments-table-container">
+              <table className="appointments-table">
+                <thead>
+                  <tr>
+                    <th>Patient Name</th>
+                    <th>Phone</th>
+                    <th>Age</th>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Doctor</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {appointments.map((apt) => (
+                    <tr key={apt.id || apt.appointmentID} className={`status-${(apt.status || 'pending').toLowerCase()}`}>
+                      <td className="patient-name">{apt.patientName}</td>
+                      <td className="phone">{apt.phoneNumber}</td>
+                      <td className="age">{apt.age || "N/A"}</td>
+                      <td className="date">{apt.preferredDate || apt.date}</td>
+                      <td className="time">{apt.preferredTime || apt.time}</td>
+                      <td className="doctor">{apt.doctorName || apt.doctorSpecialization || 'Available Doctor'}</td>
+                      <td className="status">
+                        <span className={`status-badge status-${(apt.status || 'pending').toLowerCase()}`}>
+                          {apt.status || 'pending'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="no-appointments">No appointments booked yet. Fill in the form above to book your first appointment.</p>
+          )}
         </div>
       </div>
     </div>

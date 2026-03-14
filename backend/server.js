@@ -1,18 +1,43 @@
-const express = require("express")
-const cors = require("cors")
-require("dotenv").config()
+
+
+
+import { savePatient, getUserProfile, saveAppointment, getLatestAppointment, addConversationEntry, updateAppointment, updateAppointmentByName, getAllAppointments, searchPatientsBySymptoms, searchAppointments, getMedicalHistory, saveCompletePatientProfile, saveConversationEntry, saveTriageAssessment, saveVoiceSession, getAllAppointmentsFromFirestore } from "./firestoreService.js";
+import { savePatientToCSV, saveAppointmentToCSV, saveConversationToCSV, searchPatientsInCSV, getAllAppointmentsFromCSV, searchAppointmentsInCSV, comparePatientData, compareAppointmentData, getDataStatistics, exportDataAsJSON } from "./csvService.js";
+import Groq from "groq-sdk";
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: "10mb" }))
+
+/* ─────────────── Groq Client Initialization ─────────────── */
+let groq = null;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+
+if (GROQ_API_KEY) {
+  groq = new Groq({
+    apiKey: GROQ_API_KEY
+  });
+} else {
+  console.warn("⚠️  GROQ_API_KEY not set. Will use Ollama as fallback.");
+}
+
+/* ─────────────── Ollama Configuration ─────────────── */
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "phi3:mini";
+const OLLAMA_TIMEOUT = parseInt(process.env.OLLAMA_TIMEOUT || "15000"); // 15 seconds for faster responses
 
 /* ─────────────── API keys check ─────────────── */
 const VERTEX_AI_KEY = process.env.VERTEX_AI_API_KEY || ""
 const GEMINI_KEY = process.env.GEMINI_API_KEY || ""
 const OPENAI_KEY = process.env.OPENAI_API_KEY || ""
 
-if (!VERTEX_AI_KEY && !GEMINI_KEY && !OPENAI_KEY) {
-  console.warn("⚠️  No AI providers configured (VERTEX_AI_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY). AI features will not work.")
+if (!VERTEX_AI_KEY && !GEMINI_KEY && !OPENAI_KEY && !GROQ_API_KEY) {
+  console.warn("⚠️  No primary AI providers configured. Attempting to use Ollama as fallback.")
 }
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash"
@@ -104,7 +129,7 @@ function checkAvailableSlots(date) {
   return { success: true, slots, date: normalizedDate }
 }
 
-function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID = "dr_sharma") {
+async function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID = "dr_sharma", patientAge = null) {
   // Ensure we have slots for the given date (generates defaults if missing)
   const slots = checkAvailableSlots(date).slots
   if (!slots || !slots.includes(time)) {
@@ -117,6 +142,7 @@ function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID 
     appointmentID,
     patientName,
     phoneNumber,
+    age: patientAge || "Not specified",
     date,
     time,
     reason,
@@ -132,11 +158,84 @@ function bookAppointment(patientName, phoneNumber, date, time, reason, doctorID 
   if (index > -1) {
     Medical_DB.availableSlots[date].splice(index, 1)
   }
+
+  // Save appointment to CSV file
+  try {
+    const appointmentDataForCSV = {
+      patientName: patientName,
+      phoneNumber: phoneNumber,
+      age: patientAge || "Not specified",
+      email: "N/A",
+      doctorSpecialization: Medical_DB.doctors.find(d => d.id === doctorID)?.specialty || "General",
+      preferredDate: date,
+      preferredTime: time,
+      reasonForVisit: reason,
+      status: "confirmed"
+    }
+    saveAppointmentToCSV(appointmentID, appointmentDataForCSV, "ai_voice")
+    console.log(`✅ Appointment saved to CSV: ${appointmentID}`)
+  } catch (error) {
+    console.error("⚠️ Failed to save appointment to CSV:", error)
+  }
+
+  // Save appointment to Firestore database
+  try {
+    const appointmentDataForFirestore = {
+      patientName: patientName,
+      phoneNumber: phoneNumber,
+      age: patientAge || "Not specified",
+      email: "N/A",
+      doctorSpecialization: Medical_DB.doctors.find(d => d.id === doctorID)?.specialty || "General",
+      doctorName: Medical_DB.doctors.find(d => d.id === doctorID)?.name || "Dr. Priya Sharma",
+      preferredDate: date,
+      preferredTime: time,
+      reasonForVisit: reason,
+      status: "confirmed",
+      conversationSummary: `Patient ${patientName} booked via voice AI assistant`
+    }
+    
+    // Get or create user profile
+    let userId = appointmentID
+    try {
+      const userProfile = await getUserProfile(phoneNumber)
+      userId = userProfile.userId
+    } catch (err) {
+      console.warn("Could not fetch existing user profile, creating new one")
+    }
+    
+    // Save to Firestore
+    await saveAppointment(userId, appointmentDataForFirestore)
+    console.log(`✅ Appointment saved to Firestore: ${appointmentID}`)
+
+    // ════════════════════════════════════════════════════════════
+    // FIRESTORE: Also save complete patient profile
+    // ════════════════════════════════════════════════════════════
+    try {
+      const completePatientProfile = {
+        name: patientName,
+        phoneNumber: phoneNumber,
+        email: "N/A",
+        age: patientAge || "Not specified",
+        symptoms: reason,
+        chiefComplaint: reason,
+        urgencyLevel: "general",
+        triageMode: "general",
+        sessionId: appointmentID,
+        conversationLength: 1
+      };
+      const savedProfile = await saveCompletePatientProfile(completePatientProfile);
+      console.log(`✅ Complete patient profile saved to Firestore: ${savedProfile.patientId}`);
+    } catch (error) {
+      console.warn("⚠️ Failed to save complete patient profile to Firestore:", error.message);
+    }
+  } catch (error) {
+    console.error("⚠️ Failed to save appointment to Firestore:", error)
+  }
   
   return {
     success: true,
     appointmentID,
-    message: `Appointment confirmed for ${patientName} on ${date} at ${time} with ${Medical_DB.doctors.find(d => d.id === doctorID)?.name || 'Dr. Priya Sharma'}`,
+    message: `✅ APPOINTMENT CONFIRMED!\n\n📅 Date: ${date}\n🕐 Time: ${time}\n👨‍⚕️ Doctor: ${Medical_DB.doctors.find(d => d.id === doctorID)?.name || 'Dr. Priya Sharma'}\n👤 Patient: ${patientName}\n🆔 Confirmation #: ${appointmentID}\n\n📋 APPOINTMENT INSTRUCTIONS:\n\n1️⃣ **Arrive Early**: Please arrive 10-15 minutes before your scheduled time for check-in and registration.\n\n2️⃣ **Bring Documents**: \n   • Government ID (Aadhar, PAN, or Passport)\n   • Health Insurance card (if available)\n   • List of current medications\n   • Any relevant medical reports or previous diagnoses\n\n3️⃣ **Location**: 123 Medical Center Drive, Healthcare City\n   📞 Phone: +91-XXXX-XXXX-XXXX\n\n4️⃣ **Rescheduling/Cancellation**: You can reschedule or cancel up to 24 hours before your appointment by calling us.\n\n5️⃣ **What to Expect**: Your appointment will be with ${Medical_DB.doctors.find(d => d.id === doctorID)?.name || 'Dr. Priya Sharma'} (${Medical_DB.doctors.find(d => d.id === doctorID)?.specialty || 'General Practitioner'}). Typical consultation duration is 20-30 minutes.\n\n✨ Your appointment details have been saved to both local records and Firebase database. You should receive a confirmation SMS/email shortly.\n\nThank you for choosing our clinic!`,
     appointment
   }
 }
@@ -223,16 +322,19 @@ CONVERSATION STYLE:
 const triageSessions = new Map() // Store session data: sessionId -> triage state
 
 // Initialize a new triage session
-function startTriageSession() {
+function startTriageSession(mode = "general") {
   const sessionId = "triage_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9)
   const session = {
     sessionId,
     startTime: new Date(),
+    mode: mode || "general",
     triageLevel: "UNCLEAR",
     chieComplaint: "",
     conversationHistory: [],
     patientData: {
-      age: "",
+      name: null,
+      phone: null,
+      age: null,
       location: "",
       duration: "",
       severity: "",
@@ -244,6 +346,11 @@ function startTriageSession() {
     },
     escalationAction: null,
     appointmentData: null,
+    appointmentBooking: {
+      inProgress: false,
+      missingDetails: [],
+      collectedDetails: {}
+    },
     awaitingSlotSelection: false,
     lastSlotDate: null
   }
@@ -451,9 +558,73 @@ function classifyUrgency(session) {
   return "ROUTINE"
 }
 
+/* ── Sequential Response Splitter: Break long responses into multiple shorter messages ── */
+function splitIntoSequentialResponses(response) {
+  // If response is short, return as single message
+  if (response.length < 120) {
+    return [response]
+  }
+
+  const responses = []
+  
+  // Split by sentence boundaries (. ! ?) to create natural breaks
+  const sentences = response.split(/(?<=[.!?])\s+/)
+  let currentMessage = ""
+
+  for (const sentence of sentences) {
+    // If adding sentence would exceed 100 chars, save current and start new
+    if (currentMessage.length + sentence.length > 100 && currentMessage.length > 0) {
+      responses.push(currentMessage.trim())
+      currentMessage = sentence
+    } else {
+      currentMessage += (currentMessage ? " " : "") + sentence
+    }
+  }
+
+  // Add remaining message
+  if (currentMessage.trim()) {
+    responses.push(currentMessage.trim())
+  }
+
+  // Return at most 2 sequential messages for responsive feel
+  return responses.slice(0, 2)
+}
+
+// Helper: Detect if we should suggest an appointment (for general mode)
+function shouldSuggestAppointment(session, userAnswer) {
+  // Only for general mode
+  if (session.mode !== "general") return { shouldSuggest: false }
+  
+  // Need at least 3 messages (greeting + user response + AI question + user answer)
+  const userMessages = session.conversationHistory.filter(m => m.role === "user")
+  if (userMessages.length < 2) return { shouldSuggest: false }
+  
+  // Check if symptoms mentioned (pain, fever, cough, headache, etc.)
+  const symptomKeywords = /\b(pain|fever|cough|headache|nausea|vomit|dizzy|fatigue|ache|hurt|itch|sore|bleed|sweat|weakness|loss of appetite|sick|ill)\b/i
+  const hasSymptoms = symptomKeywords.test(userAnswer) || 
+    userMessages.some(m => symptomKeywords.test(m.parts[0].text))
+  
+  if (!hasSymptoms) return { shouldSuggest: false }
+  
+  // Check if history/duration mentioned (days, weeks, started, when, how long)
+  const historyKeywords = /\b(day|week|month|since|for|started|began|when|how long|yesterday|today|last)\b/i
+  const hasHistory = historyKeywords.test(userAnswer) || 
+    userMessages.some(m => historyKeywords.test(m.parts[0].text))
+  
+  if (!hasHistory) return { shouldSuggest: false }
+  
+  // Check if appointment not already being booked
+  if (session.appointmentBooking?.inProgress) return { shouldSuggest: false }
+  
+  // All conditions met - suggest appointment
+  return { shouldSuggest: true }
+}
+
 // Simple rule-based fallback responder when AI services are unavailable
 function generateRuleBasedReply(userAnswer, session) {
   const lower = (userAnswer || "").toLowerCase()
+  
+  // EMERGENCY DETECTION
   const emergencyKeywords = [
     "chest pain",
     "trouble breathing",
@@ -468,32 +639,57 @@ function generateRuleBasedReply(userAnswer, session) {
     "seizure",
     "confusion",
     "severe headache",
-    "tightness in chest"
+    "tightness in chest",
+    "poisoning",
+    "overdose",
+    "severe burn",
+    "choking"
   ]
 
   if (emergencyKeywords.some(k => lower.includes(k))) {
     session.triageLevel = "EMERGENCY"
     session.escalationAction = "emergency"
-    return "This sounds like a medical emergency. Please call your local emergency number (e.g., 911) immediately and seek immediate care."
+    return "⚠️ This sounds like a medical emergency. Please call 102 (Ambulance) immediately or go to the nearest hospital right away."
   }
 
-  const followUpPatterns = [
-    { pattern: /\b(fever|temperature)\b/, question: "How high is your fever and how long have you had it?" },
-    { pattern: /\b(pain|ache|hurt|sore)\b/, question: "Where is the pain located and how severe is it on a scale of 1-10?" },
-    { pattern: /\b(cough|coughing)\b/, question: "Is your cough dry or are you bringing up phlegm?" },
-    { pattern: /\b(nausea|vomit|vomiting)\b/, question: "Have you been able to keep fluids down or are you vomiting frequently?" },
-    { pattern: /\b(dizzy|dizziness|lightheaded)\b/, question: "Do you feel dizzy all the time or only when you stand up?" },
-    { pattern: /\b(headache|migraine)\b/, question: "Is your headache constant and does it worsen with light or sound?" },
-    { pattern: /\b(stomach|abdominal|belly)\b/, question: "Is the discomfort in your stomach constant, and does anything make it better or worse?" }
+  // SYMPTOM-SPECIFIC FOLLOW-UPS
+  const symptomPatterns = [
+    { pattern: /\b(fever|temperature|hot)\b/, question: "How high is your fever and for how many days have you had it?" },
+    { pattern: /\b(pain|ache|hurt|sore|aching)\b/, question: "Where exactly is the pain and on a scale of 1-10, how severe is it?" },
+    { pattern: /\b(cough|coughing|coughed)\b/, question: "Is your cough dry or wet? Are you coughing up anything?" },
+    { pattern: /\b(nausea|vomit|throwing up|sick)\b/, question: "How long have you been feeling this way? Can you keep food/water down?" },
+    { pattern: /\b(dizzy|dizziness|lightheaded|spinning)\b/, question: "Are you dizzy when you move or all the time? Any nausea with it?" },
+    { pattern: /\b(headache|migraine|head pain)\b/, question: "Is this a new headache or does it happen often? Any neck stiffness?" },
+    { pattern: /\b(stomach|abdominal|belly|nausea|cramps)\b/, question: "Where in your stomach is the discomfort? Is it constant or comes and goes?" },
+    { pattern: /\b(rash|itching|itchy|redness|skin)\b/, question: "Where is the rash and how long have you had it? Is it itchy or painful?" },
+    { pattern: /\b(sore throat|throat|difficulty swallowing)\b/, question: "How long has your throat been sore? Do you have a fever too?" },
+    { pattern: /\b(wound|cut|injury|bleeding)\b/, question: "How deep is the wound and when did it happen? Is it still bleeding?" }
   ]
 
-  for (const item of followUpPatterns) {
+  // Check for symptom-specific patterns
+  for (const item of symptomPatterns) {
     if (item.pattern.test(lower)) {
       return item.question
     }
   }
 
-  return "Can you tell me when these symptoms started and whether anything makes them better or worse?"
+  // MEDICATION/ALLERGY CHECK
+  if (lower.includes("medicine") || lower.includes("medication") || lower.includes("allergy") || lower.includes("allergic")) {
+    return "Are you taking any medications right now, and do you have any known allergies?"
+  }
+
+  // PREVIOUS HISTORY CHECK
+  if (lower.includes("before") || lower.includes("happened") || lower.includes("history")) {
+    return "Has something like this happened to you before?"
+  }
+
+  // DURATION CHECK
+  if (lower.includes("when") || lower.includes("how long") || lower.includes("day") || lower.includes("week")) {
+    return "When did these symptoms start exactly?"
+  }
+
+  // GENERAL FALLBACK
+  return "Can you tell me when these symptoms started and what made you decide to come in today?"
 }
 
 // Helper function to get session or create error response
@@ -521,7 +717,7 @@ function ensureAnyKey(res) {
 /* ─────────────── Routes ─────────────── */
 
 /* ── VOICE AGENT: Book Medical Appointment ── */
-app.post("/api/voice-agent/book-appointment", (req, res) => {
+app.post("/api/voice-agent/book-appointment", async (req, res) => {
   try {
     const { patientName, phoneNumber, date, time, reason } = req.body
     
@@ -534,7 +730,31 @@ app.post("/api/voice-agent/book-appointment", (req, res) => {
     }
     
     // Execute tool: book appointment
-    const result = bookAppointment(patientName, phoneNumber, date, time, reason)
+    const result = await bookAppointment(patientName, phoneNumber, date, time, reason)
+    
+    // IMPORTANT: Save to CSV as well (voice agent booking)
+    if (result.success) {
+      try {
+        const appointmentDataForCSV = {
+          patientName,
+          phoneNumber,
+          doctorSpecialization: Medical_DB.doctors.find(d => d.id === "dr_sharma")?.specialty || "General Practice",
+          preferredDate: date,
+          preferredTime: time,
+          reasonForVisit: reason,
+          status: "confirmed",
+          appointmentID: result.appointmentID
+        };
+        
+        // Use a patient ID derived from phone number
+        const userIdForCSV = "patient_" + phoneNumber.replace(/\D/g, "");
+        await saveAppointmentToCSV(userIdForCSV, appointmentDataForCSV, "voice_agent");
+        console.log("✅ Voice agent appointment also saved to CSV with method: voice_agent");
+      } catch (csvError) {
+        console.error("⚠️ Warning: Could not save to CSV:", csvError.message);
+        // Don't fail the entire request if CSV save fails
+      }
+    }
     
     res.json({
       success: result.success,
@@ -723,12 +943,12 @@ app.get("/api/test/tool-calling", (req, res) => {
 })
 
 /* ── TESTING/DEBUG: Simulate Tool Execution ── */
-app.post("/api/test/simulate-booking", (req, res) => {
+app.post("/api/test/simulate-booking", async (req, res) => {
   try {
     const { patientName = "John Doe", phoneNumber = "555-1234", date = "2026-03-14", time = "09:00" } = req.body
     
     // Execute real tool
-    const result = bookAppointment(patientName, phoneNumber, date, time, "Test appointment")
+    const result = await bookAppointment(patientName, phoneNumber, date, time, "Test appointment")
     
     res.json({
       success: result.success,
@@ -790,17 +1010,17 @@ app.get("/health", (req, res) => {
 })
 
 /* ── PATIENT: Book Appointment ── */
-app.post("/api/patient/book-appointment", (req, res) => {
+app.post("/api/patient/book-appointment", async (req, res) => {
   try {
-    const { patientName, phoneNumber, email, date, time, reason, doctorId, visitType = "in_person" } = req.body
+    const { patientName, phoneNumber, age, date, time } = req.body
     
     // Validate required fields
-    if (!patientName || !phoneNumber || !date || !time || !reason) {
+    if (!patientName || !phoneNumber || !age || !date || !time) {
       return res.status(400).json({
         success: false,
         error: "Missing required fields",
-        required: ["patientName", "phoneNumber", "date", "time", "reason"],
-        provided: { patientName, phoneNumber, date, time, reason }
+        required: ["patientName", "phoneNumber", "age", "date", "time"],
+        provided: { patientName, phoneNumber, age, date, time }
       })
     }
     
@@ -822,61 +1042,19 @@ app.post("/api/patient/book-appointment", (req, res) => {
       })
     }
     
-    // Validate phone number format
-    const phoneRegex = /^\+?[\d\s\-\(\)]{10,}$/
-    if (!phoneRegex.test(phoneNumber)) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid phone number format."
-      })
-    }
+    // Pick any available doctor, but do not force the user to choose one.
+    const selectedDoctor =
+      Medical_DB.doctors.find(d => d.available) || Medical_DB.doctors[0]
     
-    // Check if date is in the future
-    const appointmentDate = new Date(`${date}T${time}`)
-    const now = new Date()
-    if (appointmentDate <= now) {
-      return res.status(400).json({
-        success: false,
-        error: "Appointment must be scheduled for a future date and time."
-      })
-    }
-    
-    // Check clinic hours (9 AM - 5 PM, Monday-Saturday)
-    const dayOfWeek = appointmentDate.getDay() // 0 = Sunday, 6 = Saturday
-    if (dayOfWeek === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Clinic is closed on Sundays."
-      })
-    }
-    
-    const hour = parseInt(time.split(':')[0])
-    if (hour < 9 || hour > 16) {
-      return res.status(400).json({
-        success: false,
-        error: "Clinic hours are 9:00 AM - 5:00 PM, Monday-Saturday."
-      })
-    }
-    
-    // Validate doctor
-    const selectedDoctor = doctorId ? 
-      Medical_DB.doctors.find(d => d.id === doctorId) : 
-      Medical_DB.doctors.find(d => d.available)
-    
-    if (!selectedDoctor) {
-      return res.status(400).json({
-        success: false,
-        error: "No available doctors found."
-      })
-    }
-    
+    const defaultReason = "General appointment"
+
     // Book the appointment
-    const bookingResult = bookAppointment(
-      patientName, 
-      phoneNumber, 
-      date, 
-      time, 
-      reason, 
+    const bookingResult = await bookAppointment(
+      patientName,
+      phoneNumber,
+      date,
+      time,
+      defaultReason,
       selectedDoctor.id
     )
     
@@ -886,6 +1064,30 @@ app.post("/api/patient/book-appointment", (req, res) => {
         error: bookingResult.error
       })
     }
+
+    // Generate a simple patient ID (shared with CSV)
+    const patientId = "patient_" + phoneNumber.replace(/\D/g, "")
+
+    // Save to local CSV as well (form-based booking)
+    try {
+      const appointmentDataForCSV = {
+        patientName,
+        phoneNumber,
+        doctorSpecialization: selectedDoctor.specialty,
+        preferredDate: date,
+        preferredTime: time,
+        reasonForVisit: defaultReason,
+        status: "confirmed"
+      };
+      
+      // Use patientId as userId for CSV tracking
+      const userIdForCSV = patientId;
+      await saveAppointmentToCSV(userIdForCSV, appointmentDataForCSV, "form");
+      console.log("✅ Form-based appointment also saved to CSV with method: form");
+    } catch (csvError) {
+      console.error("⚠️ Warning: Could not save to CSV:", csvError.message);
+      // Don't fail the entire request if CSV save fails
+    }
     
     // Return success response
     res.json({
@@ -893,21 +1095,15 @@ app.post("/api/patient/book-appointment", (req, res) => {
       message: "Appointment booked successfully!",
       appointment: {
         id: bookingResult.appointmentID,
+        patientId,
         patientName,
         phoneNumber,
-        email,
+        age,
         date,
         time,
-        reason,
-        doctor: {
-          id: selectedDoctor.id,
-          name: selectedDoctor.name,
-          specialty: selectedDoctor.specialty
-        },
-        visitType,
         status: "confirmed",
         bookedAt: new Date().toISOString(),
-        confirmationMessage: `Your appointment is confirmed for ${date} at ${time} with ${selectedDoctor.name}. Please arrive 15 minutes early.`
+        confirmationMessage: `Your appointment is confirmed for ${date} at ${time}. Your Patient ID is ${patientId}.`
       },
       clinicInfo: {
         address: "123 Medical Center Drive, Healthcare City",
@@ -983,16 +1179,92 @@ app.get("/api/patient/doctors", (req, res) => {
   }
 })
 
+/* ── APPOINTMENTS: Get All (for Clinic Hours view) ── */
+app.get("/api/appointments/all", async (req, res) => {
+  try {
+    // Get appointments from both CSV and Firestore
+    const csvAppointments = await getAllAppointmentsFromCSV()
+    const firestoreAppointments = await getAllAppointmentsFromFirestore()
+    
+    // Combine and deduplicate by composite key (phone + date + time)
+    const appointmentMap = new Map()
+    
+    // Add CSV appointments first
+    csvAppointments.forEach(apt => {
+      const phone = apt.phoneNumber || ""
+      const date = apt.preferredDate || apt.date || ""
+      const time = apt.preferredTime || apt.time || ""
+      const compositeKey = `${phone}_${date}_${time}`
+      appointmentMap.set(compositeKey, {
+        ...apt,
+        source: "csv"
+      })
+    })
+    
+    // Add Firestore appointments (preferring Firestore over CSV if duplicate)
+    firestoreAppointments.forEach(apt => {
+      const phone = apt.phoneNumber || ""
+      const date = apt.preferredDate || apt.date || ""
+      const time = apt.preferredTime || apt.time || ""
+      const compositeKey = `${phone}_${date}_${time}`
+      appointmentMap.set(compositeKey, {
+        ...apt,
+        source: "firestore"
+      })
+    })
+    
+    // Convert map to array and sort by date
+    const appointments = Array.from(appointmentMap.values()).sort((a, b) => {
+      const dateA = new Date(`${a.preferredDate || a.date} ${a.preferredTime || a.time}`);
+      const dateB = new Date(`${b.preferredDate || b.date} ${b.preferredTime || b.time}`);
+      return dateA - dateB;
+    })
+    
+    console.log(`📅 Retrieved ${appointments.length} deduplicated appointments (Original CSV: ${csvAppointments.length}, Original Firestore: ${firestoreAppointments.length})`)
+    
+    res.json({
+      success: true,
+      appointments,
+      summary: {
+        total: appointments.length,
+        fromCSV: csvAppointments.length,
+        fromFirestore: firestoreAppointments.length
+      }
+    })
+  } catch (error) {
+    console.error("Error getting all appointments:", error)
+    res.status(500).json({
+      success: false,
+      error: "Failed to get appointments",
+      message: error.message
+    })
+  }
+})
+
 /* ── Start triage session ── */
 app.post("/api/triage/start", (req, res) => {
   try {
-    const sessionId = startTriageSession()
+    const { mode = "general" } = req.body
+    const sessionId = startTriageSession(mode)
     const session = triageSessions.get(sessionId)
+    
+    // Determine greeting based on mode
+    let greeting = ""
+    switch ((mode || "").toString().toLowerCase()) {
+      case "urgent":
+        greeting = "Urgent Care Evaluation Started"
+        break
+      case "general":
+      default:
+        greeting = "Hey, how are you today?"
+        break
+    }
     
     res.json({
       success: true,
       sessionId,
-      message: "Hey, what is your emergency?",
+      mode,
+      message: greeting,
       timestamp: new Date().toISOString()
     })
   } catch (error) {
@@ -1014,16 +1286,16 @@ app.get("/api/triage/initial-question", (req, res) => {
     switch ((mode || "").toString().toLowerCase()) {
       case "urgent":
         questionType = "urgent_screen"
-        question = "Are you currently experiencing any of these severe symptoms: chest pain, trouble breathing, severe bleeding, or sudden confusion? Please describe what you are feeling right now."
+        question = "What are your most critical symptoms right now?"
         break
       case "mental":
         questionType = "mental_screen"
-        question = "How have you been feeling emotionally recently? Are you experiencing thoughts of self-harm, hopelessness, or extreme anxiety?"
+        question = "How have you been feeling emotionally lately?"
         break
       case "general":
       default:
         questionType = "general_screen"
-        question = "What is the main reason you are seeking medical evaluation today? Please describe your symptoms or concerns."
+        question = "What symptoms or concerns bring you in today?"
         break
     }
 
@@ -1056,15 +1328,47 @@ app.post("/api/triage/answer", async (req, res) => {
       return res.status(400).json({ success: false, error: "Missing or invalid answer" })
     }
 
+    // STEP 1: Database search for related cases
+    console.log("🔍 Searching database for related symptoms...")
+    const medicalHistory = await getMedicalHistory(userAnswer)
+    const databaseSearch = {
+      searchPerformed: true,
+      relatedCasesFound: medicalHistory.recentCases.length > 0,
+      casesCount: medicalHistory.recentCases.length,
+      recentCases: medicalHistory.recentCases.map(c => ({
+        symptoms: c.symptoms,
+        urgencyLevel: c.urgencyLevel,
+        recommendedAction: c.recommendedAction,
+        createdAt: c.timestamp
+      })),
+      commonUrgencies: medicalHistory.commonUrgencies
+    }
+    console.log("✅ Database search completed. Found", databaseSearch.casesCount, "related cases")
+
     // Store user response
     session.conversationHistory.push({
       role: "user",
       parts: [{ text: userAnswer }]
     })
 
-    // Check for emergency indicators in response
+    // ════════════════════════════════════════════════════════════
+    // FIRESTORE: Save user message to conversations collection
+    // ════════════════════════════════════════════════════════════
+    try {
+      await saveConversationEntry(sessionId, session.patientId || sessionId, "user", userAnswer, {
+        messageType: "voice_transcription",
+        confidence: 0.95 // Default confidence, can be improved with actual STT confidence
+      });
+      console.log("✅ User message saved to Firestore");
+    } catch (error) {
+      console.warn("⚠️ Failed to save user message to Firestore:", error.message);
+    }
+
+    // Check for emergency indicators in urgent mode
     const lowerAnswer = userAnswer.toLowerCase()
-    if (lowerAnswer.includes("yes") && session.conversationHistory.length <= 2) {
+    const seriousSymptoms = /chest pain|heart|breathing|breath|shortness|bleeding|bleed|injury|broken|fracture|unconscious|faint|collapse|stroke|seizure|poison|overdose|burn|choking|difficulty breathing|can't breathe|severe/i
+    
+    if (session.mode === "urgent" && seriousSymptoms.test(userAnswer)) {
       session.triageLevel = "EMERGENCY"
       session.escalationAction = "emergency"
       
@@ -1073,9 +1377,11 @@ app.post("/api/triage/answer", async (req, res) => {
         answer: userAnswer,
         triageLevel: "EMERGENCY",
         nextAction: "escalate_emergency",
-        message: "Based on what you've told me, this could be an emergency. Please call your local emergency number now. If you can't, go to the nearest emergency department immediately.",
+        emergencyRouting: true,
+        message: "🚨 EMERGENCY DETECTED 🚨\n\nCall 102 (Ambulance) or go to the nearest hospital immediately.",
         sessionId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        databaseSearch
       })
       return
     }
@@ -1092,7 +1398,8 @@ app.post("/api/triage/answer", async (req, res) => {
         toolExecuted: false,
         nextQuestion: responseText,
         questionType: "irrelevant",
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        databaseSearch
       })
     }
 
@@ -1110,13 +1417,14 @@ app.post("/api/triage/answer", async (req, res) => {
     if (session.awaitingSlotSelection && extractedTime && isTimeOnlyResponse) {
       const bookDate = session.lastSlotDate || getNextBusinessDay()
       toolName = "book_appointment"
-      toolResult = bookAppointment(
+      toolResult = await bookAppointment(
         session.patientData?.name || "Patient",
         session.patientData?.phone || "555-0000",
         bookDate,
         extractedTime,
         session.chiefComplaint || "General consultation",
-        getRandomAvailableDoctor()
+        getRandomAvailableDoctor(),
+        session.patientData?.age || null
       )
       toolExecuted = true
       session.awaitingSlotSelection = false
@@ -1129,34 +1437,94 @@ app.post("/api/triage/answer", async (req, res) => {
     if (!toolExecuted && bookPatterns.test(userAnswer)) {
       console.log("📅 Detected appointment booking request")
 
-      // Extract patient info from session or ask for it
-      let patientName = session.patientData?.name || "Patient"
-      let patientPhone = session.patientData?.phone || "555-0000"
-
-      // Try to extract date and time from user input
-      const extractedDate = extractDate(userAnswer)
-      const extractedTime = extractTime(userAnswer)
-      console.log("🗓 extractDate =>", extractedDate, "| extractTime =>", extractedTime, "| input =>", userAnswer)
-
-      if (extractedDate && extractedTime) {
-        // Have both date and time - book immediately
-        toolName = "book_appointment"
-        toolResult = bookAppointment(patientName, patientPhone, extractedDate, extractedTime, session.chiefComplaint || "General consultation", getRandomAvailableDoctor())
+      // Check if urgent mode and serious symptoms detected
+      const seriousSymptoms = /chest pain|heart|breathing|breath|shortness|bleeding|bleed|injury|broken|fracture|unconscious|faint|collapse|stroke|seizure|poison|overdose|burn|choking|emergency/i
+      const isUrgentWithSeriousSymptoms = session.mode === "urgent" && seriousSymptoms.test(session.conversationHistory.map(m => m.parts?.[0]?.text || "").join(" "))
+      
+      if (isUrgentWithSeriousSymptoms) {
+        // Present emergency routing options for urgent mode with serious symptoms
+        console.log("🚨 URGENT MODE: Serious symptoms detected - presenting emergency options")
+        toolName = "emergency_routing"
+        toolResult = {
+          success: true,
+          emergencyRouting: true,
+          options: [
+            { id: "er", label: "Go to Nearest Emergency Room", description: "Immediate evaluation at the nearest ER" },
+            { id: "ambulance", label: "Call Ambulance (102)", description: "Emergency ambulance dispatch and immediate medical care" }
+          ],
+          message: "⚠️ Based on your symptoms, I recommend immediate emergency care. You have two options:"
+        }
         toolExecuted = true
-        console.log("✅ Booking appointment with extracted date/time")
-      } else if (extractedDate) {
-        // Have date but no time - check available slots
-        toolName = "check_slots"
-        toolResult = checkAvailableSlots(extractedDate)
-        toolExecuted = true
-        console.log("📋 Checking available slots for extracted date")
       } else {
-        // No date/time extracted - check tomorrow's slots
-        const tomorrow = getNextBusinessDay()
-        toolName = "check_slots"
-        toolResult = checkAvailableSlots(tomorrow)
-        toolExecuted = true
-        console.log("📋 No date specified, checking tomorrow's slots")
+        // General appointment booking - collect missing details first
+        const missingDetails = []
+        if (!session.patientData?.name || session.patientData.name === "Patient") {
+          missingDetails.push("name")
+        }
+        if (!session.patientData?.phone || session.patientData.phone === "555-0000") {
+          missingDetails.push("phone")
+        }
+        if (!session.patientData?.age) {
+          missingDetails.push("age")
+        }
+
+        if (missingDetails.length > 0) {
+          // Need to collect details first
+          console.log("📋 Need to collect details:", missingDetails)
+          
+          // Create a friendly message for each detail needed
+          let detailMessage = "Perfect! Before I can book your appointment, I need to collect some information:\n\n"
+          if (missingDetails.includes("name")) {
+            detailMessage += "👤 First, what's your full name?\n"
+          }
+          if (missingDetails.includes("phone")) {
+            detailMessage += "📱 What's your phone number?\n"
+          }
+          if (missingDetails.includes("age")) {
+            detailMessage += "🎂 And your age?\n"
+          }
+          detailMessage += "\nOnce I have these details, I can show you available appointment slots."
+          
+          toolName = "collect_appointment_details"
+          toolResult = {
+            success: true,
+            missingDetails,
+            message: detailMessage,
+            nextDetail: missingDetails[0]
+          }
+          toolExecuted = true
+        } else {
+          // All details collected - show available slots
+          console.log("✅ All appointment details collected, showing slots")
+          const tomorrow = getNextBusinessDay()
+          const slotsResult = checkAvailableSlots(tomorrow)
+          
+          if (slotsResult.success && slotsResult.slots && slotsResult.slots.length > 0) {
+            toolName = "show_appointment_slots"
+            toolResult = {
+              success: true,
+              date: tomorrow,
+              availableSlots: slotsResult.slots,
+              patientInfo: {
+                name: session.patientData?.name,
+                phone: session.patientData?.phone,
+                age: session.patientData?.age
+              },
+              message: `Perfect! Here are the available appointment times for ${tomorrow}:\n\nPlease select one of the times below by clicking on it or saying the time (e.g., "10:00 AM" or "2:30 PM"):`
+            }
+            session.awaitingSlotSelection = true
+            session.lastSlotDate = tomorrow
+            toolExecuted = true
+          } else {
+            // No slots available
+            toolName = "check_slots"
+            toolResult = {
+              success: false,
+              message: `No appointments available for ${tomorrow}. The clinic is closed on Sundays. Would you like to check another date?`
+            }
+            toolExecuted = true
+          }
+        }
       }
     }
 
@@ -1237,35 +1605,62 @@ app.post("/api/triage/answer", async (req, res) => {
       console.log(`📋 Checking slots for ${targetDate}`)
     }
 
-    // 6. DETECT: Patient Information (Name/Phone)
-    const namePatterns = /\bmy\s+name\s+is\b|\bi'm\b|\bi\s+am\b|\bname\b.*\b\w+|\bcall\s+me\b/i
-    const phonePatterns = /\bphone\b|\bnumber\b|\bcontact\b|\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4}/i
+    // 6. DETECT: Patient Information (Name/Phone/Age)
+    const namePatterns = /\bmy\s+(?:\w+\s+)*name\s+is\b|\bi'm\b|\bi\s+am\b|\bname\b.*\b\w+|\bcall\s+me\b/i
+    const phonePatterns = /\bphone\b|\bnumber\b|\bcontact\b|\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4}|\d{10}/i
+    const agePatterns = /\bage\b|\byears?\s+old\b|\bi'm\s+\d+\b|\bi\s+am\s+\d+\b/i
 
+    // Extract name
     if (namePatterns.test(userAnswer) && !session.patientData?.name) {
-      // Extract name
-      const nameMatch = userAnswer.match(/(?:my\s+name\s+is|i'm|i\s+am|call\s+me)\s+([A-Za-z\s]+)/i)
+      const nameMatch = userAnswer.match(/(?:my\s+(?:\w+\s+)*name\s+is|i'm|i\s+am|call\s+me)\s+([A-Za-z\s]+?)(?:\s+(?:my|phone|number|age|is|and)\b|$)/i)
       if (nameMatch) {
         session.patientData.name = nameMatch[1].trim()
-        toolName = "collect_info"
-        toolResult = {
-          success: true,
-          message: `Thanks, ${session.patientData.name}! I've noted your name.`
+        console.log(`✅ Extracted name: ${session.patientData.name}`)
+        if (!toolExecuted) {
+          toolName = "collect_info"
+          toolResult = {
+            success: true,
+            message: `Thanks, ${session.patientData.name}! I've noted your name.`
+          }
+          toolExecuted = true
         }
-        toolExecuted = true
       }
     }
 
+    // Extract phone number (supports both US and Indian formats)
     if (phonePatterns.test(userAnswer) && !session.patientData?.phone) {
-      // Extract phone number
-      const phoneMatch = userAnswer.match(/(\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4})/)
+      const phoneMatch = userAnswer.match(/(\d{10}|\d{3}[-\s]?\d{3}[-\s]?\d{4}|\(\d{3}\)\s*\d{3}[-\s]?\d{4})/)
       if (phoneMatch) {
-        session.patientData.phone = phoneMatch[1]
-        toolName = "collect_info"
-        toolResult = {
-          success: true,
-          message: `Got it! I've saved your phone number: ${session.patientData.phone}`
+        session.patientData.phone = phoneMatch[1].replace(/[^0-9]/g, '')
+        console.log(`✅ Extracted phone: ${session.patientData.phone}`)
+        if (!toolExecuted) {
+          toolName = "collect_info"
+          toolResult = {
+            success: true,
+            message: `Got it! I've saved your phone number: ${session.patientData.phone}`
+          }
+          toolExecuted = true
         }
-        toolExecuted = true
+      }
+    }
+
+    // Extract age
+    if (agePatterns.test(userAnswer) && !session.patientData?.age) {
+      const ageMatch = userAnswer.match(/(\d{1,3})(?:\s+years?\s+old|\b)/i)
+      if (ageMatch) {
+        const ageValue = parseInt(ageMatch[1])
+        if (ageValue > 0 && ageValue < 150) {
+          session.patientData.age = ageValue.toString()
+          console.log(`✅ Extracted age: ${session.patientData.age}`)
+          if (!toolExecuted) {
+            toolName = "collect_info"
+            toolResult = {
+              success: true,
+              message: `Got it! I've saved your age as ${session.patientData.age} years.`
+            }
+            toolExecuted = true
+          }
+        }
       }
     }
     
@@ -1284,7 +1679,8 @@ app.post("/api/triage/answer", async (req, res) => {
       answer: userAnswer,
       sessionId,
       toolExecuted,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      databaseSearch
     }
     
     // Add tool results if executed
@@ -1298,13 +1694,40 @@ app.post("/api/triage/answer", async (req, res) => {
         switch (toolName) {
           case "book_appointment":
             const doctorName = Medical_DB.doctors.find(d => d.id === toolResult.appointment.doctorID)?.name || "your doctor"
-            confirmationMsg = `✅ **Appointment Booked Successfully!**\n\n📅 Date: ${toolResult.appointment.date}\n🕐 Time: ${toolResult.appointment.time}\n👨‍⚕️ Doctor: ${doctorName}\n🆔 Confirmation #: ${toolResult.appointmentID}\n\nPlease arrive 15 minutes early. You can reschedule or cancel up to 24 hours before your appointment.`
+            confirmationMsg = `✅ **Appointment Confirmed!**\n\n📅 Date: ${toolResult.appointment.date}\n🕐 Time: ${toolResult.appointment.time}\n👨‍⚕️ Doctor: ${doctorName}\n🆔 Confirmation #: ${toolResult.appointmentID}\n\n📍 Location: 123 Medical Center Drive, Healthcare City\n⏰ **Please arrive 15 minutes early** for check-in. Bring your ID and any relevant medical documents.\n\n✨ Your appointment details have been saved. You can reschedule or cancel up to 24 hours before your appointment by contacting us.\n\nThank you for using our clinic. See you soon!`
             break
           case "reschedule_appointment":
             confirmationMsg = `✅ **Appointment Rescheduled!**\n\n📅 New Date: ${toolResult.appointment.date}\n🕐 New Time: ${toolResult.appointment.time}\n🆔 Confirmation #: ${toolResult.appointment.appointmentID}\n\nYour appointment has been moved successfully.`
             break
           case "cancel_appointment":
             confirmationMsg = `✅ **Appointment Cancelled**\n\nYour appointment has been cancelled. If you'd like to book a new appointment, just let me know what date and time works for you.`
+            break
+          case "show_appointment_slots":
+            const slotsList = toolResult.availableSlots && toolResult.availableSlots.length > 0
+              ? toolResult.availableSlots.map((slot, i) => `${i + 1}. ${slot}`).join('\n')
+              : 'No slots available'
+            confirmationMsg = `📅 **Available Appointment Times for ${toolResult.date}**\n\nI have your details:\n👤 Name: ${toolResult.patientInfo.name}\n📞 Phone: ${toolResult.patientInfo.phone}\n🎂 Age: ${toolResult.patientInfo.age}\n\nChoose from these available times:\n${slotsList}\n\nJust tell me which time works best for you!`
+            responseObject.appointmentSlots = {
+              date: toolResult.date,
+              slots: toolResult.availableSlots,
+              patientInfo: toolResult.patientInfo
+            }
+            break
+          case "collect_appointment_details":
+            confirmationMsg = `${toolResult.message}`
+            responseObject.collectingDetails = {
+              missingDetails: toolResult.missingDetails,
+              nextDetail: toolResult.nextDetail
+            }
+            break
+          case "emergency_routing":
+            const erOption = `🏥 **Go to Nearest Emergency Room**\nImmediate evaluation at the nearest ER`
+            const callOption = `📞 **Call Ambulance (102)**\nEmergency ambulance dispatch and immediate medical care`
+            confirmationMsg = `${toolResult.message}\n\n${erOption}\n\n${callOption}\n\n⏱️ Please choose one of these options immediately.`
+            responseObject.emergencyRouting = {
+              options: toolResult.options,
+              isEmergency: true
+            }
             break
           case "check_slots":
             const slots = toolResult.slots || []
@@ -1345,58 +1768,80 @@ app.post("/api/triage/answer", async (req, res) => {
         responseObject.nextQuestion = fallback
         responseObject.questionType = "rule_based"
         responseObject.aiGenerated = false
+        
+        // Check if we should suggest appointment (general mode only)
+        const appointmentCheck = shouldSuggestAppointment(session, userAnswer)
+        if (appointmentCheck.shouldSuggest) {
+          console.log("💡 Suggesting appointment booking to user (no keys)")
+          responseObject.suggestAppointment = true
+        }
+        
         return res.json(responseObject)
       }
 
       try {
-        const systemPrompt = `You are CliniQ, a professional medical triage assistant. You are empathetic, attentive, and focused on patient safety.
+        const systemPrompt = `You are CliniQ, a fast medical triage assistant. Be brief, direct, and conversational.
 
-YOUR ROLE:
-- Assess symptoms to determine urgency (EMERGENCY, URGENT, SOON, or ROUTINE)
-- Ask clarifying follow-up questions based on what patient tells you
-- Never diagnose - only triage and route to appropriate care
-- Maintain patient confidentiality and use professional medical language
+Patient said: "${userAnswer}"
 
-CONVERSATION CONTEXT:
-Patient's previous symptoms and responses: ${session.conversationHistory.filter(m => m.role === "user").map(m => m.parts[0].text).join(" | ")}
+Rules:
+- ONE question only
+- 1 sentence maximum
+- Ask for: severity/duration OR location/intensity OR other symptoms
+- Be warm but concise, skip pleasantries
 
-IMPORTANT INSTRUCTIONS:
-1. Read the patient's last response carefully and respond directly to what they said
-2. Ask ONE specific follow-up question to gather more triage information
-3. If they mention severe symptoms (chest pain, can't breathe, etc), escalate immediately
-4. Keep responses concise (1-2 sentences max)
-5. Be conversational and caring, not robotic
-6. Based on symptoms gathered so far, determine triage level
-7. If the patient's message is unrelated to their medical concern (e.g., off-topic or nonsensical), respond with: "Question irrelevant. Please provide details about your symptoms or reason for seeking care."
+Examples:
+Patient: "I have a headache"
+AI: "How long have you had it, and is it severe?"
 
-RESPOND WITH ONLY:
-- Next clarifying question (if gathering more info needed)
-- OR brief assessment and care recommendation (if enough info collected)
-- If the question is unrelated, respond with: "Question irrelevant. Please provide details about your symptoms or reason for seeking care."
-- Keep it natural and focused on the patient's specific situation`
+Patient: "My chest hurts"
+AI: "Where exactly and on a scale of 1-10, how bad?"
 
-        const aiContents = [
-          {
-            role: "user",
-            parts: [{ text: systemPrompt + "\n\nPatient's latest response: " + userAnswer }]
-          }
-        ]
+Generate your single follow-up question now:`;
 
-        console.log("🤖 Generating AI response with context...")
-        const nextQuestion = await generateText(aiContents)
+        // Use Groq for reliable medical understanding
+        const nextQuestion = await triageWithFallback(systemPrompt, userAnswer)
         
-        if (nextQuestion && nextQuestion.trim()) {
-          console.log("✅ AI generated:", nextQuestion.slice(0, 100) + "...")
+        if (nextQuestion?.aiReply && nextQuestion.aiReply.trim()) {
+          const responseText = nextQuestion.aiReply.trim()
+          console.log("✅ AI understood and responded:", responseText.slice(0, 80) + "...")
           
           // Store AI response in history
           session.conversationHistory.push({
             role: "assistant",
-            parts: [{ text: nextQuestion }]
+            parts: [{ text: responseText }]
           })
+
+          // ════════════════════════════════════════════════════════════
+          // FIRESTORE: Save AI response to conversations collection
+          // ════════════════════════════════════════════════════════════
+          try {
+            await saveConversationEntry(sessionId, session.patientId || sessionId, "assistant", responseText, {
+              messageType: "ai_response",
+              questionType: nextQuestion.type || "follow_up"
+            });
+            console.log("✅ AI response saved to Firestore");
+          } catch (error) {
+            console.warn("⚠️ Failed to save AI response to Firestore:", error.message);
+          }
           
-          responseObject.nextQuestion = nextQuestion
+          responseObject.nextQuestion = responseText
+          
+          // Split into sequential responses for better responsiveness
+          const sequentialResponses = splitIntoSequentialResponses(responseText)
+          responseObject.nextQuestion = sequentialResponses[0]
+          responseObject.followUpQuestion = sequentialResponses.length > 1 ? sequentialResponses[1] : null
+          
           responseObject.questionType = "ai_generated"
           responseObject.aiGenerated = true
+          
+          // Check if we should suggest appointment (general mode only)
+          const appointmentCheck = shouldSuggestAppointment(session, userAnswer)
+          if (appointmentCheck.shouldSuggest) {
+            console.log("💡 Suggesting appointment booking to user")
+            responseObject.suggestAppointment = true
+          }
+          
           res.json(responseObject)
         } else {
           console.warn("⚠️ AI returned empty response")
@@ -1405,9 +1850,31 @@ RESPOND WITH ONLY:
             role: "assistant",
             parts: [{ text: fallback }]
           })
+
+          // ════════════════════════════════════════════════════════════
+          // FIRESTORE: Save fallback response to conversations collection
+          // ════════════════════════════════════════════════════════════
+          try {
+            await saveConversationEntry(sessionId, session.patientId || sessionId, "assistant", fallback, {
+              messageType: "fallback_response",
+              reason: "empty_ai_response"
+            });
+            console.log("✅ Fallback response saved to Firestore");
+          } catch (error) {
+            console.warn("⚠️ Failed to save fallback response to Firestore:", error.message);
+          }
+
           responseObject.nextQuestion = fallback
           responseObject.questionType = "rule_based"
           responseObject.aiGenerated = false
+          
+          // Check if we should suggest appointment (general mode only)
+          const appointmentCheck = shouldSuggestAppointment(session, userAnswer)
+          if (appointmentCheck.shouldSuggest) {
+            console.log("💡 Suggesting appointment booking to user (rule-based)")
+            responseObject.suggestAppointment = true
+          }
+          
           res.json(responseObject)
         }
       } catch (error) {
@@ -1421,6 +1888,14 @@ RESPOND WITH ONLY:
         responseObject.questionType = "rule_based"
         responseObject.aiGenerated = false
         responseObject.error = error.message
+        
+        // Check if we should suggest appointment (general mode only)
+        const appointmentCheckErr = shouldSuggestAppointment(session, userAnswer)
+        if (appointmentCheckErr.shouldSuggest) {
+          console.log("💡 Suggesting appointment booking to user (error fallback)")
+          responseObject.suggestAppointment = true
+        }
+        
         // Return success so the frontend can display the message without showing a network error
         res.json(responseObject)
       }
@@ -1666,7 +2141,7 @@ app.post("/api/triage/escalate-emergency", (req, res) => {
       success: true,
       escalationId: `emerg_${sessionId}_${Date.now()}`,
       message: "Emergency services have been contacted. Keep the line open and follow operator instructions.",
-      contactNumber: "911",
+      contactNumber: "102",
       sessionId,
       timestamp: new Date().toISOString()
     })
@@ -1900,7 +2375,7 @@ async function executeToolCall(toolName, params) {
           phone: "+1-800-CLINIC-1",
           hours: "Monday-Saturday: 9 AM - 5 PM",
           closed: "Sundays",
-          emergency_line: "911"
+          emergency_line: "102"
         }
       }
     }
@@ -1910,8 +2385,8 @@ async function executeToolCall(toolName, params) {
       return {
         success: true,
         message: `Emergency escalation initiated. Reason: ${reason}`,
-        emergency_number: "911",
-        instruction: "Please call 911 immediately for emergency medical assistance."
+        emergency_number: "102",
+        instruction: "Please call 102 (Ambulance) immediately for emergency medical assistance."
       }
     }
     
@@ -1961,7 +2436,7 @@ INSTRUCTIONS:
 4. When booking appointments, collect: patient name, phone, preferred date/time, and reason
 5. Before confirming any action, repeat back the details to confirm
 6. If the patient requests something impossible (e.g., Sunday when closed), explain naturally and offer alternatives
-7. For emergencies, immediately recommend calling 911
+7. For emergencies, immediately recommend calling 102 (Ambulance)
 
 AVAILABLE TOOLS (only use when needed):
 - book_appointment: Book a medical appointment
@@ -2120,29 +2595,1103 @@ app.get("/api/appointments", (req, res) => {
   })
 })
 
-/* ── Simple AI chat (backward compat) ── */
+/* ─────────────── AI Helper Functions ─────────────── */
+
+/**
+ * Call Ollama API with medical triage prompt
+ */
+async function callOllama(systemPrompt, userMessage) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT);
+
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        stream: true,
+        temperature: 0.2,
+        num_predict: 150
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+    }
+
+    // Handle streaming responses efficiently
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let aiReply = "";
+    let buffer = "";
+    let firstChunk = true;
+    const startTime = Date.now();
+    const maxStreamTime = 8000; // 8 seconds max for streaming
+
+    while (true) {
+      // Timeout check for streaming
+      if (Date.now() - startTime > maxStreamTime) {
+        console.warn("⚠️ Streaming timeout, returning partial response");
+        break;
+      }
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const json = JSON.parse(line);
+            if (json.message?.content) {
+              aiReply += json.message.content;
+              // Log first chunk arrival for responsiveness feedback
+              if (firstChunk) {
+                console.log("✅ First response chunk received (fast)");
+                firstChunk = false;
+              }
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+    }
+
+    if (!aiReply.trim()) {
+      throw new Error("No response content from Ollama");
+    }
+
+    return aiReply.trim();
+  } catch (error) {
+    console.error("Ollama error:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Medical triage with Groq (primary) and Ollama (fallback)
+ */
+async function triageWithFallback(systemPrompt, userMessage) {
+  let groqError = null;
+
+  // Try Groq first if available
+  if (groq) {
+    try {
+      console.log("📡 Attempting Groq API...");
+      const completion = await groq.chat.completions.create({
+        model: "llama3-70b-8192",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage }
+        ],
+        temperature: 0.2,
+        max_tokens: 200
+      });
+
+      const aiReply = completion.choices[0]?.message?.content;
+      if (!aiReply) {
+        throw new Error("No response from Groq");
+      }
+
+      console.log("✅ Groq API successful");
+      return { aiReply, provider: "groq" };
+    } catch (error) {
+      groqError = error;
+      console.warn("⚠️  Groq failed:", error.message);
+    }
+  } else {
+    console.log("⏭️  Groq not configured, skipping to Ollama...");
+  }
+
+  // Fallback to Ollama
+  try {
+    console.log("📡 Attempting Ollama API...");
+    const aiReply = await callOllama(systemPrompt, userMessage);
+    console.log("✅ Ollama fallback successful");
+    return { aiReply, provider: "ollama" };
+  } catch (ollamaError) {
+    console.error("❌ Both Groq and Ollama failed");
+    const errors = groqError ? `Groq: ${groqError.message}, ` : "";
+    throw new Error(
+      `AI services unavailable. ${errors}Ollama: ${ollamaError.message}`
+    );
+  }
+}
+
+/* ── Medical Triage AI Assistant ── */
 app.post("/ai", async (req, res) => {
   try {
-    if (!ensureAnyKey(res)) return
-    const userMessage = req.body?.message
-    if (!userMessage || typeof userMessage !== "string") {
-      return res.status(400).json({ error: "Missing message" })
+    const { text } = req.body;
+
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({ error: "Missing or invalid 'text' field in request body" });
     }
-    const text = await generateText([{ role: "user", parts: [{ text: userMessage }] }])
-    res.json({ reply: text })
+
+    console.log("🔍 Searching database for related symptoms...");
+    
+    // STEP 1: Search database for related cases
+    const medicalHistory = await getMedicalHistory(text);
+    const dbSearchResults = {
+      foundRelated: medicalHistory.recentCases.length > 0,
+      recentCases: medicalHistory.recentCases.map(c => ({
+        symptoms: c.symptoms,
+        urgencyLevel: c.urgencyLevel,
+        recommendedAction: c.recommendedAction,
+        createdAt: c.timestamp
+      })),
+      commonUrgencies: medicalHistory.commonUrgencies,
+      recommendations: medicalHistory.recommendations
+    };
+
+    console.log("✅ Database search completed. Found", dbSearchResults.recentCases.length, "related cases");
+
+    // STEP 2: Build AI prompt with database context
+    let enhancedSystemPrompt = `You are a medical triage assistant for CliniQ healthcare platform. Your role is to:
+1. Analyze patient symptoms and provide urgency classification
+2. Recommend immediate actions based on symptom severity
+3. Provide general medical guidance (NOT medical diagnosis)
+
+URGENCY LEVELS:
+- EMERGENCY: Life-threatening symptoms requiring immediate emergency services (102/nearest hospital)
+- HIGH: Severe symptoms requiring same-day medical attention
+- MEDIUM: Moderate symptoms requiring appointment within 24-72 hours
+- LOW: Mild symptoms that can be managed at home or routine check-up
+
+RELEVANT DATABASE INFORMATION (for context):`;
+
+    if (dbSearchResults.recentCases.length > 0) {
+      enhancedSystemPrompt += `\nSimilar cases in system: ${dbSearchResults.recentCases.length}`;
+      dbSearchResults.recentCases.forEach((c, i) => {
+        enhancedSystemPrompt += `\n${i + 1}. Urgency: ${c.urgencyLevel}, Action: ${c.recommendedAction}`;
+      });
+    }
+
+    if (Object.keys(dbSearchResults.commonUrgencies).length > 0) {
+      enhancedSystemPrompt += `\nCommon urgency classifications for similar symptoms: ${JSON.stringify(dbSearchResults.commonUrgencies)}`;
+    }
+
+    enhancedSystemPrompt += `
+
+RESPONSE FORMAT:
+You MUST respond with valid JSON only (no markdown, no extra text):
+{
+  "urgencyLevel": "LOW|MEDIUM|HIGH|EMERGENCY",
+  "recommendedAction": "Brief recommended action",
+  "aiResponse": "Helpful medical guidance based on symptoms"
+}
+
+SAFETY RULES:
+- Do NOT provide specific medication dosages
+- Do NOT attempt to diagnose
+- Do NOT replace professional medical advice
+- If emergency symptoms detected, set urgencyLevel to EMERGENCY`;
+
+    // STEP 3: Get AI response (with database context)
+    const { aiReply, provider } = await triageWithFallback(enhancedSystemPrompt, text);
+
+    if (!aiReply) {
+      return res.status(500).json({ error: "Failed to generate AI response" });
+    }
+
+    // Parse JSON response safely
+    let triageData;
+    try {
+      triageData = JSON.parse(aiReply);
+    } catch (parseError) {
+      console.error("Failed to parse AI response:", aiReply);
+      return res.status(500).json({ error: "Invalid response format from AI model" });
+    }
+
+    // Validate required fields
+    const { urgencyLevel, recommendedAction, aiResponse } = triageData;
+
+    if (!urgencyLevel || !recommendedAction || !aiResponse) {
+      return res.status(500).json({ error: "Incomplete response data from AI model" });
+    }
+
+    // Validate urgency level
+    const validUrgencyLevels = ["LOW", "MEDIUM", "HIGH", "EMERGENCY"];
+    if (!validUrgencyLevels.includes(urgencyLevel)) {
+      return res.status(500).json({ error: "Invalid urgency level from AI model" });
+    }
+
+    // Save to Firestore + Local CSV
+    console.log("💾 Attempting to save patient data to Firestore and CSV...");
+    console.log("📊 Patient Data:", { text, urgencyLevel, recommendedAction });
+    
+    let patientId;
+    try {
+      // Save to Firestore
+      patientId = await savePatient(text, aiResponse, urgencyLevel, recommendedAction);
+      console.log("✅ Patient data saved to Firestore with ID:", patientId);
+      
+      // Also save to local CSV
+      await savePatientToCSV(text, aiResponse, urgencyLevel, recommendedAction);
+    } catch (dbError) {
+      console.error("❌ SAVE ERROR:", dbError.message);
+      console.error("❌ Error code:", dbError.code);
+      console.error("❌ Full error:", dbError);
+      throw dbError;
+    }
+
+    // Return structured response with database search results
+    res.json({
+      response: aiResponse,
+      urgencyLevel: urgencyLevel,
+      recommendedAction: recommendedAction,
+      patientId: patientId,
+      aiProvider: provider,
+      databaseSearch: {
+        searchPerformed: true,
+        relatedCasesFound: dbSearchResults.foundRelated,
+        casesCount: dbSearchResults.recentCases.length,
+        recentCases: dbSearchResults.recentCases,
+        commonUrgencies: dbSearchResults.commonUrgencies
+      }
+    });
+
   } catch (error) {
-    console.error(error)
-    res.status(500).json({ error: "AI generation failed" })
+    console.error("Error in /ai route:", error);
+    res.status(500).json({ error: "Medical triage service unavailable" });
   }
-})
+});
+
+/* ─────────────── AI-Based Appointment Booking ─────────────── */
+
+/**
+ * Appointment extraction prompt for AI
+ */
+const APPOINTMENT_EXTRACTION_PROMPT = `You are an expert medical appointment assistant. Your job is to:
+1. Extract appointment details from user messages
+2. Keep track of previously mentioned information
+3. When user says "change" or "update", modify the existing data without asking for confirmation
+
+APPOINTMENT FIELDS TO EXTRACT:
+- patientName: Full name of patient
+- phoneNumber: Contact phone (required)
+- email: Email address (optional)
+- doctorSpecialization: Medical specialty (e.g., Cardiology, General Practice)
+- preferredDate: Date in YYYY-MM-DD format
+- preferredTime: Time in HH:MM format (24-hour)
+- reasonForVisit: Why they're visiting
+- ageGroup: Age category (e.g., 18-30, 31-45, 46-60, 60+)
+
+RESPONSE FORMAT (Valid JSON only):
+{
+  "understood": true,
+  "extractedData": {
+    "patientName": "value or null",
+    "phoneNumber": "value or null",
+    "email": "value or null",
+    "doctorSpecialization": "value or null",
+    "preferredDate": "value or null",
+    "preferredTime": "value or null",
+    "reasonForVisit": "value or null",
+    "ageGroup": "value or null"
+  },
+  "missingFields": ["field1", "field2"],
+  "assistantMessage": "Natural language response to user",
+  "appointmentReady": false,
+  "changeDetected": false
+}
+
+IMPORTANT RULES:
+- Return VALID JSON only (no markdown)
+- If user says "change [field] to [value]", update that field and set changeDetected to true
+- appointmentReady = true ONLY when all required fields are present (patientName, phoneNumber, doctorSpecialization, preferredDate, preferredTime, reasonForVisit)
+- Always be conversational and friendly
+- If updating, acknowledge the change in assistantMessage`;
+
+const VOICE_ASSESSMENT_PROMPT = `You are a medical appointment management assistant. Your job is to:
+1. Help patients review, reschedule, or cancel existing appointments
+2. Always confirm patient identity by asking for their name
+3. Show appointment details clearly
+4. Make changes only after name confirmation
+5. Handle requests to change time, date, add notes, or cancel
+
+CURRENT PATIENT APPOINTMENT DATA:
+[APPOINTMENT_DATA_PLACEHOLDER]
+
+RESPONSE FORMAT (Valid JSON only):
+{
+  "action": "view|reschedule|cancel|add_notes|confirm_identity",
+  "confirmationNeeded": true|false,
+  "confirmedPatientName": "name or null",
+  "requestedChange": {
+    "type": "time|date|notes|cancel",
+    "oldValue": "current value",
+    "newValue": "requested value"
+  },
+  "assistantMessage": "Natural language response to user",
+  "updateReady": false
+}
+
+IMPORTANT RULES:
+- Return VALID JSON only (no markdown)
+- ALWAYS ask "Can you confirm your name?" before making ANY changes
+- If user says "change time to [time]", set action to "reschedule" and requestedChange.type to "time"
+- If user says "cancel appointment", ask for confirmation first
+- Only set updateReady: true after name is confirmed
+- Be empathetic and professional
+- Never make assumptions about changes without explicit confirmation`;
+
+app.post("/book-appointment", async (req, res) => {
+  try {
+    const { userMessage, userIdentifier, previousAppointmentData } = req.body;
+
+    if (!userMessage || typeof userMessage !== "string") {
+      return res.status(400).json({ error: "Missing 'userMessage' field" });
+    }
+
+    if (!userIdentifier || typeof userIdentifier !== "string") {
+      return res.status(400).json({ error: "Missing 'userIdentifier' (phone or email)" });
+    }
+
+    console.log("🔍 Searching database for existing appointments...");
+
+    // STEP 1: Search database for existing appointments
+    const existingAppointments = await searchAppointments(userIdentifier);
+    
+    console.log("✅ Database search completed. Found", existingAppointments.length, "existing appointments");
+
+    // Get user profile and latest appointment
+    const userProfile = await getUserProfile(userIdentifier);
+    const latestAppointment = await getLatestAppointment(userProfile.userId);
+
+    // Prepare database search results
+    const dbSearchResults = {
+      searchPerformed: true,
+      appointmentsFound: existingAppointments.length,
+      foundAppointments: existingAppointments.map(apt => ({
+        patientName: apt.patientName,
+        date: apt.preferredDate,
+        time: apt.preferredTime,
+        doctor: apt.doctorSpecialization,
+        reason: apt.reasonForVisit,
+        status: apt.status,
+        createdAt: apt.createdAt
+      }))
+    };
+
+    // STEP 2: Build context for AI with database search results
+    let contextMessage = userMessage;
+    if (latestAppointment) {
+      contextMessage = `[PREVIOUS APPOINTMENT DATA]: ${JSON.stringify(latestAppointment)}
+[DATABASE SEARCH FOUND]: ${existingAppointments.length} existing appointment(s)
+[EXISTING APPOINTMENTS]: ${existingAppointments.map(a => `${a.patientName} on ${a.preferredDate} at ${a.preferredTime}`).join(", ")}
+
+[USER NEW MESSAGE]: ${userMessage}`;
+    } else if (existingAppointments.length > 0) {
+      contextMessage = `[DATABASE SEARCH FOUND]: ${existingAppointments.length} existing appointment(s) for this identifier
+[EXISTING APPOINTMENTS]: ${existingAppointments.map(a => `${a.patientName} on ${a.preferredDate} at ${a.preferredTime}`).join(", ")}
+
+[USER NEW MESSAGE]: ${userMessage}`;
+    }
+
+    // STEP 3: Use AI with Groq (primary) or Ollama (fallback) to extract appointment details
+    const { aiReply, provider } = await triageWithFallback(
+      APPOINTMENT_EXTRACTION_PROMPT,
+      contextMessage
+    );
+
+    // Parse JSON response
+    let appointmentExtraction;
+    try {
+      appointmentExtraction = JSON.parse(aiReply);
+    } catch (parseError) {
+      console.error("Failed to parse appointment extraction:", aiReply);
+      return res.status(500).json({ error: "Failed to parse AI response", databaseSearch: dbSearchResults });
+    }
+
+    // Validate extraction
+    if (!appointmentExtraction.understood) {
+      return res.status(400).json({
+        error: "Could not understand appointment request",
+        assistantMessage: appointmentExtraction.assistantMessage,
+        databaseSearch: dbSearchResults
+      });
+    }
+
+    // Save conversation entry
+    try {
+      await addConversationEntry(
+        userProfile.userId,
+        "user",
+        userMessage,
+        appointmentExtraction.extractedData
+      );
+      // Also save to CSV
+      await saveConversationToCSV(
+        userProfile.userId,
+        "user",
+        userMessage,
+        appointmentExtraction.extractedData
+      );
+    } catch (err) {
+      console.error("⚠️ Failed to save conversation:", err.message);
+      // Continue - this is not critical
+    }
+
+    // If change was detected and we have previous data, update it
+    if (appointmentExtraction.changeDetected && latestAppointment) {
+      const updatedAppointment = {
+        ...latestAppointment,
+        ...appointmentExtraction.extractedData,
+        conversationSummary: appointmentExtraction.assistantMessage
+      };
+
+      // Remove null values to keep previous data
+      Object.keys(updatedAppointment).forEach(key => {
+        if (updatedAppointment[key] === null) {
+          delete updatedAppointment[key];
+        }
+      });
+
+      const appointmentIndex = userProfile.appointments.length - 1;
+      await updateAppointment(userProfile.userId, appointmentIndex, updatedAppointment);
+
+      try {
+        await addConversationEntry(
+          userProfile.userId,
+          "assistant",
+          appointmentExtraction.assistantMessage,
+          updatedAppointment
+        );
+        // Also save to CSV
+        await saveConversationToCSV(
+          userProfile.userId,
+          "assistant",
+          appointmentExtraction.assistantMessage,
+          updatedAppointment
+        );
+      } catch (err) {
+        console.error("⚠️ Failed to save conversation:", err.message);
+      }
+
+      return res.json({
+        success: true,
+        status: "updated",
+        message: "Appointment updated successfully",
+        appointment: updatedAppointment,
+        assistantMessage: appointmentExtraction.assistantMessage,
+        missingFields: appointmentExtraction.missingFields,
+        databaseSearch: dbSearchResults,
+        aiProvider: provider
+      });
+    }
+
+    // If appointment is ready, save it
+    if (appointmentExtraction.appointmentReady) {
+      const completeAppointment = {
+        ...appointmentExtraction.extractedData,
+        conversationSummary: appointmentExtraction.assistantMessage
+      };
+
+      console.log("💾 Attempting to save appointment to Firestore and CSV...");
+      console.log("📅 Appointment Data:", completeAppointment);
+      
+      try {
+        // Save to Firestore
+        await saveAppointment(userProfile.userId, completeAppointment);
+        console.log("✅ Appointment saved to Firestore for user:", userProfile.userId);
+        
+        // Also save to local CSV with bookingMethod="ai"
+        await saveAppointmentToCSV(userProfile.userId, completeAppointment, "ai");
+      } catch (dbError) {
+        console.error("❌ FIRESTORE APPOINTMENT SAVE ERROR:", dbError.message);
+        console.error("❌ Error code:", dbError.code);
+        console.error("❌ Full error:", dbError);
+        throw dbError;
+      }
+
+      try {
+        await addConversationEntry(
+          userProfile.userId,
+          "assistant",
+          appointmentExtraction.assistantMessage,
+          completeAppointment
+        );
+        // Also save to CSV
+        await saveConversationToCSV(
+          userProfile.userId,
+          "assistant",
+          appointmentExtraction.assistantMessage,
+          completeAppointment
+        );
+        console.log("✅ Conversation entry saved to Firestore and CSV");
+      } catch (dbError) {
+        console.error("❌ CONVERSATION SAVE ERROR:", dbError.message);
+        // Don't throw here - conversation entry is less critical than appointment save
+      }
+
+      return res.json({
+        success: true,
+        status: "completed",
+        message: "Appointment booked successfully!",
+        appointment: completeAppointment,
+        assistantMessage: appointmentExtraction.assistantMessage,
+        databaseSearch: dbSearchResults,
+        aiProvider: provider
+      });
+    }
+
+    // If still missing fields, ask for them
+    try {
+      await addConversationEntry(
+        userProfile.userId,
+        "assistant",
+        appointmentExtraction.assistantMessage,
+        appointmentExtraction.extractedData
+      );
+      // Also save to CSV
+      await saveConversationToCSV(
+        userProfile.userId,
+        "assistant",
+        appointmentExtraction.assistantMessage,
+        appointmentExtraction.extractedData
+      );
+      console.log("✅ Conversation entry saved to Firestore and CSV");
+    } catch (dbError) {
+      console.error("⚠️ CONVERSATION SAVE ERROR:", dbError.message);
+      // Don't throw here - conversation entry is less critical
+    }
+
+    return res.json({
+      success: true,
+      status: "in-progress",
+      message: "Appointment booking in progress",
+      extractedData: appointmentExtraction.extractedData,
+      missingFields: appointmentExtraction.missingFields,
+      assistantMessage: appointmentExtraction.assistantMessage,
+      appointmentReady: false,
+      databaseSearch: dbSearchResults,
+      aiProvider: provider
+    });
+
+  } catch (error) {
+    console.error("Error in /book-appointment:", error);
+    res.status(500).json({ error: "Appointment booking failed", details: error.message });
+  }
+});
+
+/* ─────────────── Get User Appointments ─────────────── */
+app.get("/appointments/:userIdentifier", async (req, res) => {
+  try {
+    const { userIdentifier } = req.params;
+
+    if (!userIdentifier) {
+      return res.status(400).json({ error: "Missing userIdentifier" });
+    }
+
+    const userProfile = await getUserProfile(userIdentifier);
+
+    res.json({
+      success: true,
+      userId: userProfile.userId,
+      appointments: userProfile.appointments || [],
+      conversationHistory: userProfile.conversationHistory || []
+    });
+
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    res.status(500).json({ error: "Failed to fetch appointments" });
+  }
+});
+
+/* ─────────────── Voice Assessment Portal (Integrated Appointment Management) ─────────────── */
+app.post("/ai/assessment", async (req, res) => {
+  try {
+    const { userMessage, phoneNumber, conversationState } = req.body;
+
+    if (!userMessage || typeof userMessage !== "string") {
+      return res.status(400).json({ error: "Missing 'userMessage' field" });
+    }
+
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      return res.status(400).json({ error: "Missing 'phoneNumber' for appointment lookup" });
+    }
+
+    console.log("🔍 Searching database for appointments matching:", phoneNumber);
+
+    // STEP 1: Search database for appointments
+    const dbAppointments = await searchAppointments(phoneNumber);
+    const userProfile = await getUserProfile(phoneNumber);
+    const userAppointments = await getAllAppointments(userProfile.userId);
+
+    console.log("✅ Database search completed. Found", userAppointments.length, "appointments");
+
+    if (userAppointments.length === 0) {
+      return res.json({
+        success: true,
+        action: "no_appointments",
+        assistantMessage: "No appointments found for this phone number. Would you like to book a new appointment?",
+        appointments: [],
+        databaseSearch: {
+          searchPerformed: true,
+          appointmentsFound: 0,
+          foundAppointments: []
+        }
+      });
+    }
+
+    // STEP 2: Format appointment data with search results
+    const appointmentsList = userAppointments.map((apt, idx) => 
+      `Appointment ${idx + 1}: ${apt.patientName} on ${apt.preferredDate} at ${apt.preferredTime} with Dr. (${apt.doctorSpecialization}) - Reason: ${apt.reasonForVisit}`
+    ).join("\n");
+
+    // Prepare database search results
+    const dbSearchResults = {
+      searchPerformed: true,
+      appointmentsFound: userAppointments.length,
+      foundAppointments: userAppointments.map(apt => ({
+        patientName: apt.patientName,
+        date: apt.preferredDate,
+        time: apt.preferredTime,
+        doctor: apt.doctorSpecialization,
+        reason: apt.reasonForVisit,
+        status: apt.status
+      }))
+    };
+
+    const contextMessage = `PATIENT PHONE: ${phoneNumber}
+EXISTING APPOINTMENTS IN DATABASE:
+${appointmentsList}
+
+[PATIENT REQUEST]: ${userMessage}`;
+
+    // STEP 3: Use AI to understand request (with database context)
+    const systemPrompt = VOICE_ASSESSMENT_PROMPT.replace("[APPOINTMENT_DATA_PLACEHOLDER]", appointmentsList);
+    const { aiReply, provider } = await triageWithFallback(systemPrompt, contextMessage);
+
+    // Parse AI response
+    let assessmentData;
+    try {
+      assessmentData = JSON.parse(aiReply);
+    } catch (parseError) {
+      console.error("Failed to parse assessment response:", aiReply);
+      return res.status(500).json({ error: "Failed to process request" });
+    }
+
+    // Step 1: If action is to view appointments, confirm identity first
+    if (!conversationState?.identityConfirmed && assessmentData.confirmationNeeded) {
+      return res.json({
+        success: true,
+        action: "confirm_identity",
+        stage: "request_name_confirmation",
+        assistantMessage: "Can you please confirm your full name?",
+        appointments: userAppointments,
+        databaseSearch: dbSearchResults,
+        aiProvider: provider
+      });
+    }
+
+    // Step 2: Process identity confirmation
+    if (conversationState?.awaitingNameConfirmation && !conversationState?.identityConfirmed) {
+      const confirmedName = userMessage.trim();
+      
+      // Check if the name matches any appointment
+      const matchingAppointment = userAppointments.find(apt => 
+        apt.patientName.toLowerCase().includes(confirmedName.toLowerCase()) || 
+        confirmedName.toLowerCase().includes(apt.patientName.toLowerCase())
+      );
+
+      if (!matchingAppointment) {
+        return res.json({
+          success: true,
+          action: "identity_not_matched",
+          assistantMessage: `I couldn't find an appointment under the name "${confirmedName}". Please verify your name or check your phone number.`,
+          appointments: userAppointments,
+          databaseSearch: dbSearchResults,
+          aiProvider: provider
+        });
+      }
+
+      // Identity confirmed, proceed with appointment management
+      assessmentData.confirmedPatientName = confirmedName;
+    }
+
+    // Step 3: Handle appointment updates (reschedule, cancel, add notes)
+    if (assessmentData.action === "reschedule" || assessmentData.action === "cancel" || assessmentData.action === "add_notes") {
+      if (!assessmentData.confirmedPatientName) {
+        assessmentData.confirmedPatientName = conversationState?.confirmedPatientName;
+      }
+
+      if (!assessmentData.confirmedPatientName) {
+        return res.json({
+          success: true,
+          action: "confirmation_required",
+          stage: "awaiting_name",
+          assistantMessage: "To make changes to your appointment, I need to confirm your identity. What's your full name?",
+          requestedChange: assessmentData.requestedChange,
+          databaseSearch: dbSearchResults,
+          aiProvider: provider
+        });
+      }
+
+      // Update appointment after confirmation
+      try {
+        const updatePayload = {};
+        
+        if (assessmentData.requestedChange.type === "time") {
+          updatePayload.preferredTime = assessmentData.requestedChange.newValue;
+        } else if (assessmentData.requestedChange.type === "date") {
+          updatePayload.preferredDate = assessmentData.requestedChange.newValue;
+        } else if (assessmentData.requestedChange.type === "notes") {
+          updatePayload.appointmentNotes = assessmentData.requestedChange.newValue;
+        } else if (assessmentData.requestedChange.type === "cancel") {
+          updatePayload.status = "cancelled";
+        }
+
+        const result = await updateAppointmentByName(userProfile.userId, assessmentData.confirmedPatientName, updatePayload);
+
+        const confirmationMessage = `✅ Your appointment has been updated! 
+${assessmentData.requestedChange.type === "time" ? `Time changed from ${assessmentData.requestedChange.oldValue} to ${assessmentData.requestedChange.newValue}` : ""}
+${assessmentData.requestedChange.type === "date" ? `Date changed to ${assessmentData.requestedChange.newValue}` : ""}
+${assessmentData.requestedChange.type === "cancel" ? "Your appointment has been cancelled" : ""}`;
+
+        try {
+          await addConversationEntry(userProfile.userId, "assistant", confirmationMessage);
+          // Also save to CSV
+          await saveConversationToCSV(userProfile.userId, "assistant", confirmationMessage);
+        } catch (err) {
+          console.error("⚠️ Failed to save conversation:", err.message);
+        }
+
+        return res.json({
+          success: true,
+          action: "appointment_updated",
+          assistantMessage: confirmationMessage,
+          updatedAppointment: result.foundAppointment,
+          confirmedPatientName: assessmentData.confirmedPatientName,
+          databaseSearch: dbSearchResults,
+          aiProvider: provider
+        });
+      } catch (updateError) {
+        return res.json({
+          success: false,
+          action: "update_failed",
+          assistantMessage: `Could not update appointment: ${updateError.message}`,
+          databaseSearch: dbSearchResults,
+          aiProvider: provider
+        });
+      }
+    }
+
+    // Step 4: View appointments
+    if (assessmentData.action === "view") {
+      const appointmentSummary = userAppointments.map((apt, idx) => `
+${idx + 1}. Date: ${apt.preferredDate}
+   Time: ${apt.preferredTime}
+   Doctor: ${apt.doctorSpecialization}
+   Reason: ${apt.reasonForVisit}
+   Status: ${apt.status}`).join("\n");
+
+      return res.json({
+        success: true,
+        action: "view_appointments",
+        assistantMessage: `You have ${userAppointments.length} appointment(s):\n${appointmentSummary}`,
+        appointments: userAppointments,
+        databaseSearch: dbSearchResults,
+        aiProvider: provider
+      });
+    }
+
+    // Save conversation entry
+    try {
+      await addConversationEntry(userProfile.userId, "user", userMessage);
+      // Also save to CSV
+      await saveConversationToCSV(userProfile.userId, "user", userMessage);
+    } catch (err) {
+      console.error("⚠️ Failed to save conversation:", err.message);
+    }
+
+    res.json({
+      success: true,
+      action: assessmentData.action,
+      assistantMessage: assessmentData.assistantMessage,
+      appointments: userAppointments,
+      databaseSearch: dbSearchResults,
+      aiProvider: provider
+    });
+
+  } catch (error) {
+    console.error("Error in /ai/assessment:", error);
+    res.status(500).json({ error: "Assessment service failed", details: error.message });
+  }
+});
+
+/* ─────────────── Local CSV Data Endpoints ─────────────── */
+
+/**
+ * Get all appointments with booking method (AI or Form)
+ */
+app.get("/appointments/all", async (req, res) => {
+  try {
+    const { userIdentifier } = req.query;
+
+    console.log("📋 Fetching all appointments with booking methods...");
+    
+    if (userIdentifier) {
+      // Get appointments for specific user
+      const csvAppointments = await getAllAppointmentsFromCSV();
+      const userAppointments = csvAppointments.filter(apt => 
+        apt.phoneNumber.includes(userIdentifier) || 
+        apt.userId.includes(userIdentifier)
+      );
+
+      return res.json({
+        success: true,
+        filter: `For identifier: ${userIdentifier}`,
+        count: userAppointments.length,
+        appointments: userAppointments.map(apt => ({
+          id: apt.id,
+          patientName: apt.patientName,
+          phoneNumber: apt.phoneNumber,
+          date: apt.preferredDate,
+          time: apt.preferredTime,
+          doctor: apt.doctorSpecialization,
+          reason: apt.reasonForVisit,
+          status: apt.status,
+          bookingMethod: apt.bookingMethod || "form", // "ai" or "form"
+          createdAt: apt.createdAt,
+          updatedAt: apt.updatedAt
+        }))
+      });
+    } else {
+      // Get all appointments
+      const csvAppointments = await getAllAppointmentsFromCSV();
+
+      return res.json({
+        success: true,
+        count: csvAppointments.length,
+        summary: {
+          aiBooked: csvAppointments.filter(a => a.bookingMethod === "ai").length,
+          formBooked: csvAppointments.filter(a => a.bookingMethod === "form").length
+        },
+        appointments: csvAppointments.map(apt => ({
+          id: apt.id,
+          patientName: apt.patientName,
+          phoneNumber: apt.phoneNumber,
+          date: apt.preferredDate,
+          time: apt.preferredTime,
+          doctor: apt.doctorSpecialization,
+          reason: apt.reasonForVisit,
+          status: apt.status,
+          bookingMethod: apt.bookingMethod || "form", // "ai" or "form"
+          createdAt: apt.createdAt,
+          updatedAt: apt.updatedAt
+        }))
+      });
+    }
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    res.status(500).json({ error: "Failed to fetch appointments", details: error.message });
+  }
+});
+
+/**
+ * Compare patient symptoms against stored CSV data
+ */
+app.post("/compare-patient-data", async (req, res) => {
+  try {
+    const { symptoms } = req.body;
+
+    if (!symptoms || typeof symptoms !== "string") {
+      return res.status(400).json({ error: "Missing or invalid 'symptoms' field" });
+    }
+
+    console.log("🔍 Comparing patient symptoms against CSV data...");
+    const comparison = await comparePatientData(symptoms);
+
+    res.json({
+      success: true,
+      comparison,
+      message: comparison.foundSimilar
+        ? `Found ${comparison.totalMatches} similar cases in local database`
+        : "No similar cases found in local database"
+    });
+  } catch (error) {
+    console.error("Error comparing patient data:", error);
+    res.status(500).json({ error: "Comparison failed", details: error.message });
+  }
+});
+
+/**
+ * Compare appointment data against stored CSV
+ */
+app.post("/compare-appointment-data", async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      return res.status(400).json({ error: "Missing or invalid 'phoneNumber' field" });
+    }
+
+    console.log("🔍 Comparing appointment data against CSV data...");
+    const comparison = await compareAppointmentData(phoneNumber);
+
+    res.json({
+      success: true,
+      comparison,
+      message: comparison.foundExisting
+        ? `Found ${comparison.totalCount} existing appointment(s) for this phone`
+        : "No existing appointments found"
+    });
+  } catch (error) {
+    console.error("Error comparing appointment data:", error);
+    res.status(500).json({ error: "Comparison failed", details: error.message });
+  }
+});
+
+/**
+ * Get all patients from local CSV
+ */
+app.get("/csv/patients", async (req, res) => {
+  try {
+    console.log("📋 Fetching all patients from CSV...");
+    const patients = await getAllPatientsFromCSV();
+
+    res.json({
+      success: true,
+      count: patients.length,
+      patients
+    });
+  } catch (error) {
+    console.error("Error fetching patients:", error);
+    res.status(500).json({ error: "Failed to fetch patients" });
+  }
+});
+
+/**
+ * Search patients in CSV by symptoms
+ */
+app.get("/csv/patients/search", async (req, res) => {
+  try {
+    const { symptoms } = req.query;
+
+    if (!symptoms) {
+      return res.status(400).json({ error: "Missing 'symptoms' query parameter" });
+    }
+
+    console.log("🔍 Searching patients in CSV by symptoms...");
+    const results = await searchPatientsInCSV(symptoms);
+
+    res.json({
+      success: true,
+      searchTerm: symptoms,
+      count: results.length,
+      results
+    });
+  } catch (error) {
+    console.error("Error searching patients:", error);
+    res.status(500).json({ error: "Search failed" });
+  }
+});
+
+/**
+ * Get all appointments from local CSV
+ */
+app.get("/csv/appointments", async (req, res) => {
+  try {
+    console.log("📋 Fetching all appointments from CSV...");
+    const appointments = await getAllAppointmentsFromCSV();
+
+    res.json({
+      success: true,
+      count: appointments.length,
+      appointments
+    });
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    res.status(500).json({ error: "Failed to fetch appointments" });
+  }
+});
+
+/**
+ * Search appointments in CSV
+ */
+app.get("/csv/appointments/search", async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query) {
+      return res.status(400).json({ error: "Missing 'query' parameter" });
+    }
+
+    console.log("🔍 Searching appointments in CSV...");
+    const results = await searchAppointmentsInCSV(query);
+
+    res.json({
+      success: true,
+      searchTerm: query,
+      count: results.length,
+      results
+    });
+  } catch (error) {
+    console.error("Error searching appointments:", error);
+    res.status(500).json({ error: "Search failed" });
+  }
+});
+
+/**
+ * Get data statistics from CSV
+ */
+app.get("/csv/statistics", async (req, res) => {
+  try {
+    console.log("📊 Fetching data statistics from CSV...");
+    const stats = await getDataStatistics();
+
+    res.json({
+      success: true,
+      statistics: stats
+    });
+  } catch (error) {
+    console.error("Error fetching statistics:", error);
+    res.status(500).json({ error: "Failed to fetch statistics" });
+  }
+});
+
+/**
+ * Export all data as JSON
+ */
+app.get("/csv/export", async (req, res) => {
+  try {
+    console.log("💾 Exporting all data to JSON...");
+    const exportPath = await exportDataAsJSON();
+
+    res.json({
+      success: true,
+      message: "Data exported successfully",
+      exportPath
+    });
+  } catch (error) {
+    console.error("Error exporting data:", error);
+    res.status(500).json({ error: "Export failed", details: error.message });
+  }
+});
 
 /* ─────────────── Server Startup ─────────────── */
 const PORT = Number(process.env.PORT) || 3001
 app.listen(PORT, () => {
   console.log(`\n🏥 Virtual Clinic Medical Triage System`)
   console.log(`📡 Server running on port ${PORT}`)
+  console.log(`\n  AI Services:`)
+  console.log(`  Groq: ✅ enabled`)
+  console.log(`  Ollama: ${OLLAMA_BASE_URL} (${OLLAMA_MODEL})`)
+  console.log(`  Fallback Chain: Groq → Ollama\n`)
   console.log(`  Vertex AI: ${VERTEX_AI_KEY ? "✅ configured" : "❌ not set"}`)
   console.log(`  Gemini: ${GEMINI_KEY ? "✅ configured" : "❌ not set"}`)
-  console.log(`  OpenAI: ${OPENAI_KEY ? "✅ configured" : "❌ not set"}`)
-  console.log(`  Fallback Chain: Vertex AI → Gemini → OpenAI\n`)
+  console.log(`  OpenAI: ${OPENAI_KEY ? "✅ configured" : "❌ not set"}\n`)
 })

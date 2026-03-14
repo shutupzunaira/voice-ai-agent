@@ -178,22 +178,24 @@
   background: linear-gradient(135deg, #2c3e50 0%, #1a1a1a 100%);
   color: white;
   border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  font-weight: 600;
+  padding: 1.25rem 3rem;
+  border-radius: 12px;
+  font-size: 1.3rem;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.3s ease;
+  min-width: 320px;
+  box-shadow: 0 6px 20px rgba(44, 62, 80, 0.3);
 }
 
 .start-button:hover {
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(44, 62, 80, 0.4);
+  transform: translateY(-4px);
+  box-shadow: 0 10px 30px rgba(44, 62, 80, 0.5);
   background: linear-gradient(135deg, #1a1a1a 0%, #000000 100%);
 }
 
 .start-button:active {
-  transform: scale(0.98);
+  transform: translateY(-2px);
 }
 
 .home-features {

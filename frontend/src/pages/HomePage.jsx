@@ -49,9 +49,6 @@ function HomePage({ onStartInterview, onBookAppointment }) {
             <button className="start-button" onClick={() => setShowOptions(true)}>
               Start Medical Assessment
             </button>
-            <button className="booking-button" onClick={onBookAppointment}>
-              📅 Book Appointment
-            </button>
           </div>
 
           <div className="home-features">
@@ -82,10 +79,10 @@ function HomePage({ onStartInterview, onBookAppointment }) {
               <p className="assessment-count">Emergency detection • Priority routing • Urgent booking</p>
             </div>
 
-            <div className="assessment-card" onClick={() => onStartInterview('mental')}>
-              <h3>🧠 Mental Health Screening</h3>
-              <p>Initial assessment for mental health concerns and crisis support</p>
-              <p className="assessment-count">Crisis detection • Support resources • Specialized care booking</p>
+            <div className="assessment-card" onClick={onBookAppointment}>
+              <h3>📅 Book an Appointment</h3>
+              <p>Schedule a direct appointment with available doctors</p>
+              <p className="assessment-count">Flexible scheduling • Instant confirmation • Easy rescheduling</p>
             </div>
           </div>
 

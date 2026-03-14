@@ -15,6 +15,7 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
   const recordingIntervalRef = useRef(null)
   const fullTranscriptRef = useRef("")
   const chatBoxRef = useRef(null)
+  const silenceTimeoutRef = useRef(null)
 
   /* ─── helpers ─── */
   const addMessage = useCallback((sender, text) => {
@@ -39,6 +40,14 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
     setIsSpeaking(false)
   }
 
+  function pauseListening() {
+    if (recognitionRef.current && recognitionRef.current._keepAlive) {
+      try {
+        recognitionRef.current.stop()
+      } catch { /* ignore */ }
+    }
+  }
+
   function speak(text) {
     return new Promise((resolve) => {
       try {
@@ -47,12 +56,22 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
           return
         }
         window.speechSynthesis.cancel()
+        
+        // DO NOT pause listening - keep listening even while AI speaks
+        // User can interrupt anytime
+        
         const utterance = new SpeechSynthesisUtterance(text)
         utterance.lang = "en-US"
         utterance.rate = 1.0
         utterance.onstart = () => setIsSpeaking(true)
-        utterance.onend = () => { setIsSpeaking(false); resolve() }
-        utterance.onerror = () => { setIsSpeaking(false); resolve() }
+        utterance.onend = () => { 
+          setIsSpeaking(false)
+          resolve() 
+        }
+        utterance.onerror = () => { 
+          setIsSpeaking(false)
+          resolve() 
+        }
         window.speechSynthesis.speak(utterance)
       } catch {
         setIsSpeaking(false)
@@ -72,9 +91,7 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
   }
 
   async function apiGetGreeting() {
-    const res = await fetch("/api/greeting")
-    const data = await res.json()
-    return data.greeting || "Hey there! Let's begin your interview."
+    return "Hey, what is your emergency?"
   }
 
   async function apiNextQuestion() {
@@ -109,6 +126,56 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
     return data
   }
 
+  /* ─── Detect Appointment Booking Request ─── */
+  function detectAppointmentRequest(text) {
+    const lower = text.toLowerCase()
+    const bookingPatterns = [
+      /book.*appointment/i,
+      /schedule.*appointment/i,
+      /make.*appointment/i,
+      /need.*appointment/i,
+      /want.*appointment/i,
+      /can i.*appointment/i,
+      /i.*need.*to.*see/i
+    ]
+    return bookingPatterns.some(p => p.test(lower))
+  }
+
+  /* ─── Save Appointment from Assessment ─── */
+  async function saveAssessmentAppointment(patientAnswer) {
+    try {
+      const appointmentData = {
+        patientName: "Assessment Interview Patient",
+        phoneNumber: "assessment-portal",
+        doctorSpecialization: "General Practice",
+        preferredDate: new Date().toISOString().split('T')[0],
+        preferredTime: "09:00",
+        reasonForVisit: patientAnswer.substring(0, 100),
+        status: "assessment-requested",
+        source: "general-assessment-portal"
+      }
+
+      const res = await fetch("/api/patient/book-appointment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(appointmentData)
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        console.log("✅ Appointment saved from assessment:", data)
+        addMessage("AI", "I've recorded your appointment request. You can view and confirm it in the Book Appointment section.")
+        return true
+      } else {
+        console.warn("⚠️ Could not save appointment:", await res.text())
+        return false
+      }
+    } catch (error) {
+      console.error("❌ Error saving appointment:", error)
+      return false
+    }
+  }
+
   /* ─── Speech Recognition setup ─── */
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -127,6 +194,11 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
 
     recognition.onresult = (event) => {
       let finalText = ""
+      // Only process results if user actively clicked record
+      if (!recognitionRef.current?._keepAlive) {
+        return
+      }
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
         const text = (result?.[0]?.transcript || "").trim()
@@ -135,34 +207,63 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
       }
       if (finalText) {
         fullTranscriptRef.current += (fullTranscriptRef.current ? " " : "") + finalText
+        setUserInput(finalText)
+        // If AI is speaking, stop it immediately when user speaks (user interruption)
+        if (isSpeaking) {
+          console.log("🎙️ User interrupted AI - stopping speaking and listening")
+          stopSpeaking()
+        }
+        // Reset and restart 2-second silence timeout when user speaks
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current)
+        }
+        silenceTimeoutRef.current = setTimeout(() => {
+          if (recognitionRef.current?._keepAlive && fullTranscriptRef.current.trim()) {
+            console.log("2-second silence detected, stopping recording")
+            stopRecording()
+          }
+        }, 2000)
       }
     }
 
     recognition.onerror = (event) => {
+      // Only log errors, don't auto-restart
       console.error("Speech recognition error:", event.error)
-      // Don't stop on no-speech errors, just keep going
-      if (event.error !== "no-speech" && event.error !== "aborted") {
+      // User intervention needed - don't auto-restart
+      if (event.error !== "aborted" && event.error !== "no-speech") {
         setIsRecording(false)
         clearInterval(recordingIntervalRef.current)
       }
     }
 
     recognition.onend = () => {
-      // Auto-restart if still recording (browser may stop after silence)
+      // Only restart if user actively clicked record
       if (recognitionRef.current?._keepAlive) {
-        try { recognition.start() } catch { /* ignore */ }
+        try {
+          setTimeout(() => {
+            try { recognition.start() } catch { /* ignore */ }
+          }, 100)
+        } catch { /* ignore */ }
+      }
+      // Clear timeout on end
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current)
       }
     }
 
     recognitionRef.current = recognition
 
     return () => {
+      // Stop TTS when component unmounts (back button)
+      stopSpeaking()
+      
+      // Stop all recognition
       if (recognitionRef.current) {
         recognitionRef.current._keepAlive = false
         recognitionRef.current.onresult = null
         recognitionRef.current.onerror = null
         recognitionRef.current.onend = null
-        try { recognitionRef.current.stop() } catch { /* ignore */ }
+        try { recognitionRef.current.abort() } catch { /* ignore */ }
         recognitionRef.current = null
       }
       clearInterval(recordingIntervalRef.current)
@@ -179,14 +280,12 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
         addMessage("AI", greeting)
         scrollToBottom()
         await speak(greeting)
-
-        // Fetch first question
-        const { question, questionNumber } = await apiNextQuestion()
-        setQuestionCount(questionNumber)
-        addMessage("AI", question)
-        scrollToBottom()
-        await speak(question)
         setSessionStarted(true)
+        
+        // Auto-start recording so AI is always listening
+        setTimeout(() => {
+          startRecording()
+        }, 500)
       } catch (error) {
         console.error("Init error:", error)
         addMessage("AI", `Error starting session: ${error.message}`)
@@ -223,6 +322,9 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
       console.error("Error starting recognition:", error)
       setIsRecording(false)
       clearInterval(recordingIntervalRef.current)
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current)
+      }
       addMessage("AI", "Could not start speech recognition. Please check microphone permissions.")
     }
   }
@@ -231,6 +333,9 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
     if (!recognitionRef.current) return
 
     recognitionRef.current._keepAlive = false
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current)
+    }
     try { recognitionRef.current.stop() } catch { /* ignore */ }
     setIsRecording(false)
     clearInterval(recordingIntervalRef.current)
@@ -240,7 +345,10 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
 
     const transcript = fullTranscriptRef.current.trim()
     if (!transcript) {
-      addMessage("AI", "I didn't catch that. Could you try again?")
+      // If no transcript, restart recording to keep listening
+      setTimeout(() => {
+        startRecording()
+      }, 300)
       return
     }
 
@@ -255,12 +363,27 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
     if (!answerText?.trim()) return
     setLoading(true)
     try {
+      // Check if user is asking to book appointment
+      if (detectAppointmentRequest(answerText)) {
+        console.log("📅 Appointment booking request detected")
+        await saveAssessmentAppointment(answerText)
+      }
+
       await apiPostAnswer(answerText)
+      
+      // Minimal delay before AI responds (user had 2 seconds of silence, respond quickly)
+      await new Promise((r) => setTimeout(r, 500))
+      
       const { question, questionNumber } = await apiNextQuestion()
       setQuestionCount(questionNumber)
       addMessage("AI", question)
       scrollToBottom()
       await speak(question)
+      
+      // Auto-restart recording so AI keeps listening
+      setTimeout(() => {
+        startRecording()
+      }, 500)
     } catch (error) {
       console.error("Error processing answer:", error)
       addMessage("AI", `Error: ${error.message || "Could not process your answer."}`)
@@ -325,7 +448,8 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
         <button className="back-button" onClick={() => { stopSpeaking(); onBack() }}>
           ← Back
         </button>
-        <h1>TalkScout Interview</h1>
+        <h1>🏥 CliniQ Medical Triage</h1>
+        <p className="subtitle"><strong>General Health Assessment</strong></p>
         <p className="question-counter">Question {questionCount}</p>
       </div>
 
@@ -370,22 +494,6 @@ function InterviewPage({ topic = "general", onEndInterview, onBack }) {
               disabled={loading || isRecording}
             >
               ⏭ Next Question
-            </button>
-          </div>
-
-          <div className="input-group">
-            <input
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendTypedAnswer() } }}
-              placeholder="Or type your answer here..."
-              disabled={isRecording || loading}
-            />
-            <button
-              onClick={sendTypedAnswer}
-              disabled={isRecording || !userInput.trim() || loading}
-            >
-              Send
             </button>
           </div>
 

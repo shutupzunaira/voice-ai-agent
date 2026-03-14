@@ -39,6 +39,19 @@
   min-width: 0;
 }
 
+.subtitle {
+  color: #555;
+  font-size: 1rem;
+  margin: 0.5rem 0 0 0;
+  font-weight: 500;
+  width: 100%;
+}
+
+.subtitle strong {
+  color: #2c3e50;
+  font-weight: 700;
+}
+
 .question-counter {
   background: #667eea;
   color: white;
